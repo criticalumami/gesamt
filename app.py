@@ -225,6 +225,12 @@ div[data-baseweb="input"], div[data-baseweb="select"], textarea {
     color: var(--text) !important;
 }
 
+/* Force all inner nested container divs to inherit parent's background color */
+div[data-baseweb="input"] div, 
+div[data-baseweb="select"] div {
+    background-color: transparent !important;
+}
+
 /* Strip borders from raw inputs, selectors, and inner elements to prevent double border nesting */
 input, 
 select,
