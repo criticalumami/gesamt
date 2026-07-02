@@ -1,0 +1,21 @@
+# Sensitive config — never commit
+settings.json
+daleel_cookies.json
+storage_state.json
+jobs.db
+
+# AI evaluation cache
+evaluation_cache.json
+
+# Job results
+*.csv
+
+# Screenshots/debug images
+*.png
+
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

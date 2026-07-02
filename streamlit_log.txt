@@ -1,0 +1,39 @@
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8508
+  Network URL: http://192.168.18.8:8508
+
+  For better performance, install the Watchdog module:
+
+  $ xcode-select --install
+  $ pip install watchdog
+            
+====================================================
+STARTING PROFILE-MATCHED JOB SCRAPER PIPELINE
+====================================================
+[Pipeline] 0 URLs already tracked — will skip these.
+
+[Daleel Madani] Skipping (disabled in configuration).
+
+[UN Careers] Skipping (disabled in configuration).
+
+[ReliefWeb] Skipping (disabled in configuration).
+
+[LinkedIn] Skipping (disabled in configuration).
+
+--- [Bayt.com] Launching HTTP Scraper via curl_cffi ---
+
+[EURAXESS] Skipping (disabled in configuration).
+  [Bayt.com] Querying: https://www.bayt.com/en/beirut/jobs/?q=architect...
+    Failed to retrieve Bayt page for 'architect' in 'beirut': Status 404
+
+[Bayt.com] Completed scraping. Found 0 matches.
+
+====================================================
+PIPELINE EXECUTION COMPLETE
+====================================================
+Total matching jobs found: 0 (Deduplicated from 0)
+Empty DataFrame
+Columns: [Platform, Title, Location, Description, Deadline, URL, Match Score, Match Reason, Key Requirements, Status]
+Index: []
