@@ -28,6 +28,15 @@ def init_db():
             date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS office_applications (
+            office_name TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'Uncontacted',
+            notes TEXT DEFAULT '',
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
     
@@ -195,20 +204,35 @@ def get_cached_job(url):
         }
     return None
 
-def write_db_to_csv():
-    """Export all jobs to CSV for backup/download compatibility."""
-    df = get_all_jobs_df()
-    df.to_csv(CSV_FILE, index=False, encoding="utf-8")
-
 def clear_all_jobs():
-    """Wipes the database and removes backup CSV files."""
+    """Wipes the database."""
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("DELETE FROM jobs")
     conn.commit()
     conn.close()
-    if os.path.exists(CSV_FILE):
-        try:
-            os.remove(CSV_FILE)
-        except Exception:
-            pass
+
+def get_office_applications():
+    """
+    Returns a dictionary of office_name -> {status, notes}
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT office_name, status, notes FROM office_applications")
+    rows = c.fetchall()
+    conn.close()
+    return {row["office_name"]: {"status": row["status"], "notes": row["notes"]} for row in rows}
+
+def save_office_application(office_name, status, notes):
+    """
+    Saves or updates the status and notes for an office.
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT OR REPLACE INTO office_applications (office_name, status, notes, last_updated)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    """, (office_name, status, notes))
+    conn.commit()
+    conn.close()
+

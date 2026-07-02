@@ -55,8 +55,6 @@ def load_settings():
     return DEFAULT_KEYWORDS, DEFAULT_LOCATIONS, DEFAULT_PLATFORMS, "", "", "", "", True, "OR", "gemini-flash-latest"
 
 KEYWORDS, LOCATIONS, PLATFORMS, UN_USERNAME, UN_PASSWORD, GEMINI_API_KEY, PROFILE_SUMMARY, AI_ENABLED, KEYWORD_MODE, GEMINI_MODEL = load_settings()
-OUTPUT_FILE = "profile_matched_jobs.csv"
-
 # Convert HEADLESS env var to boolean, default to True
 HEADLESS_ENV = os.getenv("HEADLESS", "True")
 HEADLESS = HEADLESS_ENV.lower() in ("true", "1", "yes")
@@ -65,18 +63,7 @@ HEADLESS = HEADLESS_ENV.lower() in ("true", "1", "yes")
 REQUEST_DELAY = 3  # delay between detail page requests
 PAGE_DELAY = 5     # delay between main pages
 
-from filelock import FileLock
 import threading
-CSV_LOCK_FILE = OUTPUT_FILE + ".lock"
-csv_lock = FileLock(CSV_LOCK_FILE, timeout=30)
-
-def append_match_to_csv(match):
-    if "Status" not in match:
-        match["Status"] = "New"
-    try:
-        db.save_job(match)
-    except Exception as e:
-        print(f"[Database] Error saving match to DB: {e}")
 
 def load_existing_urls():
     """Return a set of URLs already saved in the SQLite database (Applied and Archived)."""
@@ -111,7 +98,13 @@ def http_get_with_retry(url, *, session=None, retries=3, backoff=1, **kwargs):
                 r = session.get(url, **kwargs)
             else:
                 r = requests.get(url, **kwargs)
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+            if r.status_code == 429 and attempt < retries - 1:
+                import random
+                wait = 15 * (2 ** attempt) + random.uniform(2.0, 5.0)
+                print(f"    [Rate Limit] HTTP 429. Backing off for {wait:.1f}s before retry...")
+                time.sleep(wait)
+                continue
+            if r.status_code in (500, 502, 503, 504) and attempt < retries - 1:
                 wait = backoff * (2 ** attempt)
                 print(f"    [Retry] HTTP {r.status_code} on attempt {attempt+1}. Retrying in {wait}s...")
                 time.sleep(wait)
@@ -602,7 +595,7 @@ def scrape_daleel_madani(existing_urls=None):
                                     "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                                 }
                                 matched_jobs.append(match)
-                                append_match_to_csv(match)
+                                db.save_job(match)
                         else:
                             title = res.get("title", "Unknown")
                             err = res.get("error") or f"HTTP status {res.get('status')}"
@@ -722,7 +715,7 @@ def scrape_euraxess(existing_urls=None):
                     for job_item in jobs_to_check:
                         res = fetch_euraxess_detail(job_item)
                         results.append(res)
-                        time.sleep(2.5)  # rate limit bypass delay
+                        time.sleep(1.5)  # rate limit bypass delay (safe sequential delay)
                         
                     for res in results:
                         if res and res.get("success"):
@@ -747,7 +740,7 @@ def scrape_euraxess(existing_urls=None):
                                     "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                                 }
                                 matched_jobs.append(match)
-                                append_match_to_csv(match)
+                                db.save_job(match)
                         else:
                             title = res.get("title", "Unknown")
                             err = res.get("error") or f"HTTP status {res.get('status')}"
@@ -756,6 +749,7 @@ def scrape_euraxess(existing_urls=None):
                 time.sleep(PAGE_DELAY)
             except Exception as e:
                 print(f"    Error scraping search page {page_num + 1}: {e}")
+        time.sleep(3.0)  # Sleep between keyword searches to prevent rate limiting
                 
     return matched_jobs
 
@@ -1085,7 +1079,7 @@ def scrape_un_careers(existing_urls=None):
                                 "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                             }
                             matched_jobs.append(match)
-                            append_match_to_csv(match)
+                            db.save_job(match)
                         else:
                             print("    No profile match.")
                             
@@ -1178,7 +1172,7 @@ def scrape_reliefweb(existing_urls=None):
 
     params = {"search": query_str}
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0"
     }
     
     url = "https://reliefweb.int/jobs"
@@ -1248,7 +1242,7 @@ def scrape_reliefweb(existing_urls=None):
                             "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                         }
                         matched_jobs.append(match)
-                        append_match_to_csv(match)
+                        db.save_job(match)
                     else:
                         print("    No profile match in details.")
                 else:
@@ -1270,7 +1264,7 @@ def scrape_linkedin(existing_urls=None):
         existing_urls = set()
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0"
     }
     
     combined_kws = " OR ".join(f'"{kw}"' for kw in KEYWORDS)
@@ -1309,6 +1303,11 @@ def scrape_linkedin(existing_urls=None):
                     if not title_el or not link_el:
                         continue
 
+                    # Extract post date for LinkedIn (since there is no application deadline)
+                    date_el = item.select_one("time, .job-search-card__listdate, .job-search-card__listdate--new")
+                    post_date = date_el.text.strip() if date_el else ""
+                    deadline_str = f"Posted: {post_date}" if post_date else "See listing"
+
                     title = title_el.text.strip()
                     company = company_el.text.strip() if company_el else "N/A"
                     location = loc_el.text.strip() if loc_el else loc
@@ -1323,6 +1322,7 @@ def scrape_linkedin(existing_urls=None):
                         
                     cached_job = db.get_cached_job(detail_url)
                     if cached_job:
+                        full_title = f"{title} at {company}" if company != "N/A" else title
                         print(f"    [Cache] Restored cached match details for: '{full_title}'")
                         cached_job["Status"] = "New"
                         db.save_job(cached_job)
@@ -1359,14 +1359,14 @@ def scrape_linkedin(existing_urls=None):
                         "Title": full_title,
                         "Location": location,
                         "Description": clean_description(description),
-                        "Deadline": "See listing",
+                        "Deadline": deadline_str,
                         "URL": detail_url,
                         "Match Score": score,
                         "Match Reason": reason,
                         "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                     }
                     matched_jobs.append(match)
-                    append_match_to_csv(match)
+                    db.save_job(match)
 
                 except Exception as ie:
                     print(f"    Error parsing row: {ie}")
@@ -1460,7 +1460,7 @@ def scrape_bayt(existing_urls=None):
                         print(f"    => MATCH FOUND: '{full_title}'")
 
                         date_el = card.select_one(".jb-date")
-                        deadline = date_el.text.strip() if date_el else "See listing"
+                        deadline = f"Posted: {date_el.text.strip()}" if date_el else "See listing"
 
                         score, reason, reqs = get_ai_evaluation(full_title, description, location, job_url=detail_url)
                         match = {
@@ -1475,7 +1475,7 @@ def scrape_bayt(existing_urls=None):
                             "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
                         }
                         matched_jobs.append(match)
-                        append_match_to_csv(match)
+                        db.save_job(match)
                     except Exception as ce:
                         print(f"    Error parsing card: {ce}")
                 time.sleep(1)  # polite delay between keyword queries
@@ -1621,13 +1621,171 @@ def run_pipeline():
     print("PIPELINE EXECUTION COMPLETE")
     print("====================================================")
     try:
-        # Export matching results to CSV for backup/download compatibility
-        db.write_db_to_csv()
         df = db.get_all_jobs_df()
         print(f"Total matching jobs found: {len(df)}")
         print(df.to_string())
     except Exception as ex:
-        print(f"Error exporting database results to CSV: {ex}")
+        print(f"Error fetching database results: {ex}")
+
+
+def scrape_custom_office_website(office_name, website_url):
+    """
+    Crawls the website of a custom office, searches for careers information,
+    and uses Gemini to extract open job roles.
+    """
+    import pandas as pd
+    import json
+    import requests
+    from bs4 import BeautifulSoup
+    
+    print(f"\n--- [AI Web Scraper] Scanning website for '{office_name}' at: {website_url} ---")
+    
+    if not website_url or pd.isna(website_url) or not isinstance(website_url, str):
+        return {"success": False, "error": "Invalid website URL."}
+        
+    url = website_url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    if not GEMINI_API_KEY:
+        return {"success": False, "error": "Gemini API key is required to use the website AI scraper."}
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    }
+
+    # Fetch main homepage
+    try:
+        r = http_get_with_retry(url, headers=headers, timeout=15, retries=2, backoff=2)
+        if r.status_code != 200:
+            return {"success": False, "error": f"Failed to fetch homepage: HTTP status {r.status_code}"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to connect to website: {e}"}
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    
+    # 1. Discover potential career links on the homepage
+    candidate_urls = [url]  # Always scan main page as fallback
+    
+    from urllib.parse import urljoin
+    for link_el in soup.find_all("a", href=True):
+        href = link_el["href"].lower()
+        text = link_el.get_text().lower()
+        if href.startswith("javascript:") or href.startswith("mailto:") or href.startswith("tel:") or href.startswith("#"):
+            continue
+        if any(kw in href or kw in text for kw in ["career", "job", "vacancy", "work-with-us", "recruitment", "join", "contact", "about"]):
+            absolute_url = urljoin(url, link_el["href"])
+            if absolute_url.startswith("http://") or absolute_url.startswith("https://"):
+                if absolute_url not in candidate_urls:
+                    candidate_urls.append(absolute_url)
+
+    # Let's inspect at most the first 3 candidate URLs to keep execution fast and polite
+    scanned_pages = []
+    
+    # We prioritize sub-pages that are not the home page itself if they exist
+    sub_pages = [p for p in candidate_urls if p != url][:2]
+    pages_to_scan = sub_pages if sub_pages else [url]
+    
+    for page_url in pages_to_scan:
+        try:
+            print(f"  Fetching content page: {page_url}")
+            pr = http_get_with_retry(page_url, headers=headers, timeout=12, retries=2, backoff=2)
+            if pr.status_code == 200:
+                page_soup = BeautifulSoup(pr.text, "html.parser")
+                # Remove header/footer noise if possible, or just extract visible text
+                for noise in page_soup(["script", "style", "nav", "footer"]):
+                    noise.decompose()
+                page_text = page_soup.get_text(separator=" ", strip=True)
+                # Keep first 6000 chars
+                page_text = page_text[:6000]
+                scanned_pages.append({"url": page_url, "text": page_text})
+        except Exception as e:
+            print(f"  Warning: failed to fetch subpage {page_url}: {e}")
+
+    if not scanned_pages:
+        return {"success": False, "error": "No readable content pages found."}
+
+    # Use Gemini to parse text from all scanned pages
+    combined_text = "\n\n--- Page Content ---\n".join(f"URL: {p['url']}\n{p['text']}" for p in scanned_pages)
+    
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    
+    prompt = f"""You are an expert recruiter scanning the website text of '{office_name}' (an architecture/design studio).
+Analyze the page text below and determine if they list any active open vacancies or job openings.
+
+Combine similar entries and exclude old or closed postings if explicitly indicated.
+
+Respond ONLY with a JSON array of objects representing the open roles (no markdown code blocks, no backticks, just raw JSON). If no open roles are listed, return an empty array [].
+
+Each object in the array MUST have this format:
+{{
+  "title": "Job Title (e.g. Architect, Intern)",
+  "location": "Location (e.g. Beirut, Dbayeh)",
+  "description": "Short summary of the role, requirements, or how to apply",
+  "url": "Specific application/contact URL or email address"
+}}
+
+Page Text Content:
+{combined_text}"""
+
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": prompt
+            }]
+        }]
+    }
+
+    try:
+        ar = requests.post(api_url, headers=headers, json=payload, timeout=20)
+        if ar.status_code != 200:
+            return {"success": False, "error": f"Gemini API returned status {ar.status_code}"}
+            
+        res_json = ar.json()
+        text = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        import re
+        json_match = re.search(r"\[.*\]", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+            
+        roles = json.loads(text)
+        if not isinstance(roles, list):
+            roles = []
+            
+        matches_found = []
+        for role in roles:
+            title = role.get("title", "Job Posting")
+            loc = role.get("location", "Beirut, Lebanon")
+            desc = role.get("description", "No description provided.")
+            job_url = role.get("url", url)
+            
+            # Match against user filters
+            if matches_profile(title, desc, loc):
+                # Perform AI evaluation (if enabled)
+                score, reason, reqs = get_ai_evaluation(title, desc, loc, job_url=job_url)
+                match = {
+                    "Platform": office_name,
+                    "Title": title,
+                    "Location": loc,
+                    "Description": clean_description(desc),
+                    "Deadline": "See listing",
+                    "URL": job_url,
+                    "Match Score": score,
+                    "Match Reason": reason,
+                    "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
+                    "Status": "New"
+                }
+                db.save_job(match)
+                matches_found.append(match)
+                
+        return {"success": True, "roles": matches_found}
+    except Exception as e:
+        return {"success": False, "error": f"Error parsing website roles with Gemini: {e}"}
 
 if __name__ == "__main__":
     run_pipeline()
