@@ -55,6 +55,19 @@ def load_settings():
     return DEFAULT_KEYWORDS, DEFAULT_LOCATIONS, DEFAULT_PLATFORMS, "", "", "", "", True, "OR", "gemini-flash-latest"
 
 KEYWORDS, LOCATIONS, PLATFORMS, UN_USERNAME, UN_PASSWORD, GEMINI_API_KEY, PROFILE_SUMMARY, AI_ENABLED, KEYWORD_MODE, GEMINI_MODEL = load_settings()
+
+# Check for command line keyword overrides
+import argparse
+parser = argparse.ArgumentParser(description="Gesamtkunstwerk Scraper")
+parser.add_argument("--override-keywords", type=str, default="", help="Comma-separated keywords to override settings")
+args, unknown = parser.parse_known_args()
+
+if args.override_keywords:
+    override_list = [k.strip() for k in args.override_keywords.split(",") if k.strip()]
+    if override_list:
+        KEYWORDS = override_list
+        print(f"[Pipeline] Active Keywords Overridden by Command Line: {KEYWORDS}")
+
 # Convert HEADLESS env var to boolean, default to True
 HEADLESS_ENV = os.getenv("HEADLESS", "True")
 HEADLESS = HEADLESS_ENV.lower() in ("true", "1", "yes")

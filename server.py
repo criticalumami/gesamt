@@ -185,7 +185,7 @@ async def save_settings(payload: SettingsPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/scan")
-async def run_scan():
+async def run_scan(override_keywords: Optional[str] = None):
     global active_process
     
     # Check if process is already running
@@ -204,10 +204,15 @@ async def run_scan():
     python_bin = venv_python if os.path.exists(venv_python) else sys.executable
     
     try:
+        # Build command with temporary keyword override if provided
+        cmd = [python_bin, "-u", "scraper.py"]
+        if override_keywords:
+            cmd.extend(["--override-keywords", override_keywords])
+            
         # Start scraper pipeline as process, redirect output to pipeline.log
         log_f = open(LOG_FILE, "w")
         active_process = subprocess.Popen(
-            [python_bin, "-u", "scraper.py"],
+            cmd,
             stdout=log_f,
             stderr=subprocess.STDOUT,
             text=True

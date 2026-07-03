@@ -429,8 +429,18 @@ async function startGlobalScan() {
     el.terminalContainer.classList.remove('hidden');
     el.terminalBody.textContent = 'Starting pipeline execution background thread...\n';
 
+    // Check if the search input has a temporary keyword override
+    const searchVal = el.globalSearchInput.value.trim();
+    const settingsVal = (state.settings.keywords || []).join(', ');
+    
+    let url = '/api/scan';
+    if (searchVal && searchVal.toLowerCase() !== settingsVal.toLowerCase()) {
+        url += '?override_keywords=' + encodeURIComponent(searchVal);
+        el.terminalBody.textContent += `[Pipeline Override] Running scan temporarily for: "${searchVal}"\n`;
+    }
+
     try {
-        const response = await fetch('/api/scan', { method: 'POST' });
+        const response = await fetch(url, { method: 'POST' });
         if (response.ok) {
             // Poll for logs
             state.logInterval = setInterval(pollTerminalLogs, 1000);
