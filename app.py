@@ -718,7 +718,7 @@ with tab_global:
         # Load settings from settings.json
         DEFAULT_KEYWORDS = ["urban planning", "heritage conservation", "architecture", "urban research", "qgis"]
         DEFAULT_LOCATIONS = ["beirut", "paris", "berlin", "hamburg"]
-        DEFAULT_PLATFORMS = ["Daleel Madani", "UN Careers", "ReliefWeb", "LinkedIn", "Bayt.com", "EURAXESS", "OEA"]
+        DEFAULT_PLATFORMS = ["Daleel Madani", "UN Careers", "ReliefWeb", "LinkedIn", "Bayt.com", "EURAXESS", "OEA", "Jobs for Lebanon"]
 
         settings = {"keywords": DEFAULT_KEYWORDS, "locations": DEFAULT_LOCATIONS, "platforms": DEFAULT_PLATFORMS}
         if os.path.exists("settings.json"):
@@ -781,7 +781,7 @@ with tab_global:
                 st.error(expand_msg)
 
         new_loc = st.text_input("Target Locations (comma separated)", loc_str)
-        new_platforms = st.multiselect("Active Job Boards", ["Daleel Madani", "UN Careers", "ReliefWeb", "LinkedIn", "Bayt.com", "EURAXESS", "OEA"], default=selected_platforms)
+        new_platforms = st.multiselect("Active Job Boards", ["Daleel Madani", "UN Careers", "ReliefWeb", "LinkedIn", "Bayt.com", "EURAXESS", "OEA", "Jobs for Lebanon"], default=selected_platforms)
         un_username = settings.get("un_username", "")
         un_password = settings.get("un_password", "")
         gemini_api_key = settings.get("gemini_api_key", "")

@@ -1596,6 +1596,16 @@ def run_pipeline():
         else:
             print("\n[OEA] Skipping (disabled in configuration).")
 
+    def run_jobs_for_lebanon():
+        if "Jobs for Lebanon" in PLATFORMS:
+            try:
+                jobs = scrape_jobs_for_lebanon(existing_urls=existing_urls)
+                print(f"\n[Jobs for Lebanon] Completed scraping. Found {len(jobs)} matches.")
+            except Exception as e:
+                print(f"\n[Jobs for Lebanon] Scraper failed: {e}")
+        else:
+            print("\n[Jobs for Lebanon] Skipping (disabled in configuration).")
+
     # Start threads concurrently
     import threading
     t_daleel = threading.Thread(target=run_daleel)
@@ -1605,6 +1615,7 @@ def run_pipeline():
     t_bayt = threading.Thread(target=run_bayt)
     t_euraxess = threading.Thread(target=run_euraxess)
     t_oea = threading.Thread(target=run_oea)
+    t_jfl = threading.Thread(target=run_jobs_for_lebanon)
     
     t_daleel.daemon = True
     t_un.daemon = True
@@ -1613,6 +1624,7 @@ def run_pipeline():
     t_bayt.daemon = True
     t_euraxess.daemon = True
     t_oea.daemon = True
+    t_jfl.daemon = True
     
     t_daleel.start()
     t_un.start()
@@ -1621,6 +1633,7 @@ def run_pipeline():
     t_bayt.start()
     t_euraxess.start()
     t_oea.start()
+    t_jfl.start()
     
     t_daleel.join()
     t_un.join()
@@ -1629,6 +1642,7 @@ def run_pipeline():
     t_bayt.join()
     t_euraxess.join()
     t_oea.join()
+    t_jfl.join()
     
     # Deduplicate final database entries and export to CSV
     print("\n====================================================")
@@ -1967,6 +1981,101 @@ def scrape_oea(existing_urls=None):
             print(f"  Warning: failed to parse listing card: {ce}")
             
     print(f"[OEA Beirut] Completed. Discovered {len(matches_found)} matches.")
+    return matches_found
+
+def scrape_jobs_for_lebanon(existing_urls=None):
+    """
+    Scrapes the Jobs for Lebanon portal powered by SmartRecruiters API.
+    Bypasses direct HTML scraping by utilizing their clean JSON API.
+    """
+    import urllib.parse
+    import requests
+    
+    print("\n--- [Jobs for Lebanon] Initiating scraper... ---")
+    if existing_urls is None:
+        existing_urls = []
+        
+    matches_found = []
+    
+    # We query the API for each keyword to keep search results targeted
+    for keyword in KEYWORDS:
+        print(f"[Jobs for Lebanon] Searching keyword: '{keyword}'...")
+        query_url = f"https://api.smartrecruiters.com/v1/companies/JobsForLebanon/postings?q={urllib.parse.quote(keyword)}&limit=100"
+        
+        try:
+            r = requests.get(query_url, timeout=15)
+            if r.status_code != 200:
+                print(f"  Warning: failed to query keyword {keyword} (status {r.status_code})")
+                continue
+                
+            data = r.json()
+            postings = data.get("content", [])
+            print(f"  Found {len(postings)} total listings for '{keyword}'.")
+            
+            for post in postings:
+                try:
+                    job_id = post.get("id")
+                    title = post.get("name", "")
+                    detail_url = f"https://jobs.smartrecruiters.com/JobsForLebanon/{job_id}"
+                    
+                    if not job_id or detail_url in existing_urls or any(m["URL"] == detail_url for m in matches_found):
+                        continue
+                        
+                    # Extract location
+                    loc_data = post.get("location", {})
+                    loc = loc_data.get("fullLocation") or loc_data.get("city") or "Lebanon"
+                    
+                    # Fetch details using API to get rich description
+                    detail_api_url = f"https://api.smartrecruiters.com/v1/companies/JobsForLebanon/postings/{job_id}"
+                    dr = requests.get(detail_api_url, timeout=15)
+                    if dr.status_code != 200:
+                        continue
+                        
+                    detail_data = dr.json()
+                    
+                    # Build full description from jobAd sections
+                    job_ad = detail_data.get("jobAd", {})
+                    sections = job_ad.get("sections", {})
+                    desc_parts = []
+                    
+                    for sec_key in ["companyDescription", "jobDescription", "qualifications", "additionalInformation"]:
+                        sec = sections.get(sec_key, {})
+                        sec_title = sec.get("title")
+                        sec_text = sec.get("text")
+                        if sec_text:
+                            if sec_title:
+                                desc_parts.append(f"### {sec_title}\n{sec_text}")
+                            else:
+                                desc_parts.append(sec_text)
+                                
+                    description = "\n\n".join(desc_parts)
+                    
+                    # Double-check keyword and location profile match on full details
+                    if matches_profile(title, description, loc):
+                        # Perform AI scoring/summary
+                        score, reason, reqs = get_ai_evaluation(title, description, loc, job_url=detail_url)
+                        
+                        match = {
+                            "Platform": "Jobs for Lebanon",
+                            "Title": title,
+                            "Location": loc,
+                            "Description": clean_description(description),
+                            "Deadline": "See listing",
+                            "URL": detail_url,
+                            "Match Score": score,
+                            "Match Reason": reason,
+                            "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
+                            "Status": "New"
+                        }
+                        db.save_job(match)
+                        matches_found.append(match)
+                        print(f"  => MATCH FOUND: '{title}' (Score: {score})")
+                except Exception as pe:
+                    print(f"  Warning: failed parsing posting: {pe}")
+        except Exception as e:
+            print(f"  Warning: error querying Jobs for Lebanon for keyword '{keyword}': {e}")
+            
+    print(f"[Jobs for Lebanon] Completed. Discovered {len(matches_found)} matches.")
     return matches_found
 
 if __name__ == "__main__":
