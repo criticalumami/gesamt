@@ -30,6 +30,7 @@ const el = {
     customSearchInput: document.getElementById('custom-search-input'),
     customAddressSelect: document.getElementById('custom-address-select'),
     scanJobBoardsBtn: document.getElementById('scan-job-boards-btn'),
+    stopScanBtn: document.getElementById('stop-scan-btn'),
     clearResultsBtn: document.getElementById('clear-results-btn'),
     terminalContainer: document.getElementById('terminal-container'),
     terminalBody: document.getElementById('terminal-body'),
@@ -92,6 +93,7 @@ function initEventListeners() {
 
     // Scraper control buttons
     el.scanJobBoardsBtn.addEventListener('click', startGlobalScan);
+    el.stopScanBtn.addEventListener('click', stopGlobalScanCall);
     el.clearResultsBtn.addEventListener('click', clearAllResults);
     el.terminalCloseBtn.addEventListener('click', () => el.terminalContainer.classList.add('hidden'));
 
@@ -117,6 +119,13 @@ async function loadSettings() {
         if (response.ok) {
             state.settings = await response.json();
             renderSettingsPanel();
+            
+            // Pre-populate global feed search box with target keywords
+            if (state.settings.keywords && state.settings.keywords.length > 0) {
+                const kwStr = state.settings.keywords.join(', ');
+                el.globalSearchInput.value = kwStr;
+                state.searchQuery = kwStr.toLowerCase();
+            }
         }
     } catch (e) {
         showToast('Error loading settings: ' + e.message);
@@ -153,10 +162,12 @@ function renderJobs() {
     const grid = el.globalListingsGrid;
     grid.innerHTML = '';
 
-    // Apply client side search/filter
+    // Apply client side search/filter splitting by commas/spaces (OR mode)
+    const terms = state.searchQuery.split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
     const filtered = state.jobs.filter(job => {
         const text = `${job.Title} ${job.Platform} ${job.Location} ${job.Description}`.toLowerCase();
-        return text.includes(state.searchQuery);
+        if (terms.length === 0) return true;
+        return terms.some(term => text.includes(term));
     });
 
     if (filtered.length === 0) {
@@ -349,6 +360,16 @@ async function saveSettings() {
         if (response.ok) {
             showToast('Settings saved successfully!');
             state.settings = payload;
+            
+            // Sync saved keywords with the global feed search box
+            if (keywords.length > 0) {
+                const kwStr = keywords.join(', ');
+                el.globalSearchInput.value = kwStr;
+                state.searchQuery = kwStr.toLowerCase();
+            } else {
+                el.globalSearchInput.value = '';
+                state.searchQuery = '';
+            }
         } else {
             const txt = await response.text();
             showToast('Failed to save settings: ' + txt);
@@ -401,8 +422,9 @@ async function startGlobalScan() {
     if (state.scanning) return;
     
     state.scanning = true;
-    el.scanJobBoardsBtn.disabled = true;
-    el.scanJobBoardsBtn.textContent = 'Scanning...';
+    el.scanJobBoardsBtn.classList.add('hidden');
+    el.stopScanBtn.classList.remove('hidden');
+    
     el.terminalContainer.classList.remove('hidden');
     el.terminalBody.textContent = 'Starting pipeline execution background thread...\n';
 
@@ -446,8 +468,26 @@ async function pollTerminalLogs() {
 function stopGlobalScanUI() {
     state.scanning = false;
     clearInterval(state.logInterval);
-    el.scanJobBoardsBtn.disabled = false;
-    el.scanJobBoardsBtn.textContent = 'Scan Job Boards';
+    el.scanJobBoardsBtn.classList.remove('hidden');
+    el.stopScanBtn.classList.add('hidden');
+}
+
+async function stopGlobalScanCall() {
+    el.stopScanBtn.disabled = true;
+    el.stopScanBtn.textContent = 'Stopping...';
+    try {
+        const response = await fetch('/api/scan/stop', { method: 'POST' });
+        if (response.ok) {
+            showToast('Scan stop requested.');
+        } else {
+            showToast('Failed to stop scan.');
+        }
+    } catch (e) {
+        showToast('Error stopping scan: ' + e.message);
+    } finally {
+        el.stopScanBtn.disabled = false;
+        el.stopScanBtn.textContent = 'Stop Scan';
+    }
 }
 
 async function clearAllResults() {
