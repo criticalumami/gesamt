@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesamtkunstwerk — Premium Job Search Portal</title>
+    <meta name="description" content="AI-Powered Critical Architecture and Urbanism Job Search Portal">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Top Sleek Glass Navigation -->
+    <header class="glass-header">
+        <div class="header-container">
+            <h1 class="logo">GESAMTKUNSTWERK <span class="logo-beta">AI</span></h1>
+            <nav class="tab-navigation">
+                <button class="nav-btn active" id="tab-global-btn">Global Feed</button>
+                <button class="nav-btn" id="tab-custom-btn">Custom Directory</button>
+                <button class="nav-btn" id="tab-settings-btn">Settings</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <!-- 1. Global Feed Tab -->
+        <section class="tab-panel active" id="panel-global">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input type="text" id="global-search-input" placeholder="Search matches by keyword, title, or company...">
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn-secondary" id="clear-results-btn">Clear Results</button>
+                    <button class="btn btn-primary" id="scan-job-boards-btn">Scan Job Boards</button>
+                </div>
+            </div>
+
+            <!-- Terminal Scraper Log Output Console -->
+            <div class="terminal-container hidden" id="terminal-container">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                    </div>
+                    <span class="terminal-title">Scraper Pipeline Terminal Output</span>
+                    <button class="terminal-close-btn" id="terminal-close-btn">&times;</button>
+                </div>
+                <pre class="terminal-body" id="terminal-body">Initiating scan...</pre>
+            </div>
+
+            <!-- Main grid of matching job listings -->
+            <div class="listings-grid" id="global-listings-grid">
+                <!-- Javascript will render cards here -->
+                <div class="empty-state">
+                    <p class="empty-text">No matching jobs found in feed. Run the scraper or verify your configurations.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. Custom Directory Tab -->
+        <section class="tab-panel" id="panel-custom">
+            <div class="actions-bar">
+                <div class="search-box">
+                    <input type="text" id="custom-search-input" placeholder="Search custom offices by name or focus...">
+                </div>
+                <div class="filter-box">
+                    <select id="custom-address-select">
+                        <option value="">All Locations / Neighborhoods</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="listings-grid" id="custom-directory-grid">
+                <!-- Javascript will render custom offices cards here -->
+            </div>
+        </section>
+
+        <!-- 3. Configuration & Settings Tab -->
+        <section class="tab-panel" id="panel-settings">
+            <div class="settings-grid">
+                <!-- Settings Left Column -->
+                <div class="settings-card">
+                    <h2 class="settings-title">Filter Configurations</h2>
+                    
+                    <div class="form-group">
+                        <label for="settings-keywords">Target Keywords (comma separated)</label>
+                        <div class="keywords-input-container">
+                            <input type="text" id="settings-keywords" placeholder="urban planning, architecture, GIS...">
+                            <button class="btn btn-secondary btn-sm" id="btn-auto-expand">Auto-Expand</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="settings-locations">Target Locations (comma separated)</label>
+                        <input type="text" id="settings-locations" placeholder="beirut, berlin, paris...">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="settings-platforms">Active Job Boards</label>
+                        <div class="multiselect-platforms" id="settings-platforms-checkboxes">
+                            <!-- Javascript will render checkboxes here -->
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="settings-match-logic">Keyword Match Logic</label>
+                            <div class="radio-group">
+                                <label><input type="radio" name="match-logic" value="OR" checked> OR</label>
+                                <label><input type="radio" name="match-logic" value="AND"> AND</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-row toggles-row">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="settings-ai-enabled">
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Enable AI Evaluation & Matching</span>
+                        </label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="settings-scheduler-enabled">
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Enable Daily Auto-Scan (8:00 AM)</span>
+                        </label>
+                    </div>
+
+                    <button class="btn btn-primary w-full" id="save-settings-btn">Save Configurations</button>
+                </div>
+
+                <!-- Settings Right Column -->
+                <div class="settings-card">
+                    <h2 class="settings-title">Gemini AI & Profile Settings</h2>
+
+                    <div class="form-group">
+                        <label for="settings-api-key">Gemini API Key (optional)</label>
+                        <input type="password" id="settings-api-key" placeholder="••••••••••••••••••••••••••••••••">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="settings-model">Gemini Model</label>
+                        <select id="settings-model">
+                            <option value="gemini-flash-latest">gemini-flash-latest</option>
+                            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-pro-latest">gemini-pro-latest</option>
+                            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="settings-profile">Current Extracted Profile / Resume Summary</label>
+                        <textarea id="settings-profile" rows="8" placeholder="Paste your detailed resume or professional summary..."></textarea>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Slide-out Drawer / Detail View Modal -->
+    <div class="drawer-overlay" id="detail-drawer-overlay"></div>
+    <div class="detail-drawer" id="detail-drawer">
+        <div class="drawer-header">
+            <button class="drawer-close-btn" id="detail-drawer-close">&larr; Back to Feed</button>
+            <span class="drawer-badge" id="detail-drawer-platform">Platform</span>
+        </div>
+        <div class="drawer-body">
+            <h2 class="drawer-title" id="detail-drawer-title">Job Title</h2>
+            <div class="drawer-meta">
+                <span class="drawer-meta-item" id="detail-drawer-company">Company</span>
+                <span class="drawer-meta-item" id="detail-drawer-location">Location</span>
+                <span class="drawer-meta-item" id="detail-drawer-deadline">Deadline</span>
+            </div>
+            
+            <div class="ai-analysis-box hidden" id="detail-drawer-ai-box">
+                <div class="ai-score-ring" id="detail-drawer-ai-score">85</div>
+                <div class="ai-analysis-content">
+                    <h3 class="ai-analysis-header">Gemini AI Evaluation</h3>
+                    <p class="ai-analysis-text" id="detail-drawer-ai-reason">Match Reason</p>
+                    <p class="ai-analysis-reqs" id="detail-drawer-ai-reqs">Key Requirements</p>
+                </div>
+            </div>
+
+            <div class="drawer-description" id="detail-drawer-description">
+                <!-- Description HTML parsed here -->
+            </div>
+        </div>
+        <div class="drawer-footer">
+            <a href="#" target="_blank" class="btn btn-primary text-center" id="detail-drawer-apply-btn">Apply Now</a>
+        </div>
+    </div>
+
+    <!-- UI Toast Notifications -->
+    <div class="toast" id="toast-notification">Notification Message</div>
+
+    <script src="app.js"></script>
+</body>
+</html>
