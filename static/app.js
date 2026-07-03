@@ -104,6 +104,7 @@ function initEventListeners() {
     // Save configurations
     document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
     document.getElementById('btn-auto-expand').addEventListener('click', autoExpandKeywords);
+    document.getElementById('settings-resume').addEventListener('change', uploadResumeFile);
 }
 
 // API Fetch Helpers
@@ -630,4 +631,50 @@ function showToast(message) {
     setTimeout(() => {
         el.toast.classList.remove('show');
     }, 3000);
+}
+
+async function uploadResumeFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    // Check if Gemini API key is configured first
+    const geminiKey = document.getElementById('settings-api-key').value.trim();
+    if (!geminiKey) {
+        showToast('Please enter and save a Gemini API Key first.');
+        e.target.value = ''; // Reset uploader
+        return;
+    }
+
+    showToast('Uploading and parsing resume PDF via Gemini AI...');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/resume/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                // Populate profile textarea
+                document.getElementById('settings-profile').value = data.profile_summary;
+                
+                // Populate keywords field
+                document.getElementById('settings-keywords').value = data.keywords.join(', ');
+                
+                showToast('Resume parsed! Click Save Configurations to store.');
+            } else {
+                showToast('AI Parsing Failed: ' + (data.error || 'Unknown error'));
+            }
+        } else {
+            const txt = await response.text();
+            showToast('Upload Failed: ' + txt);
+        }
+    } catch (err) {
+        showToast('Upload Error: ' + err.message);
+    } finally {
+        e.target.value = ''; // Reset uploader
+    }
 }

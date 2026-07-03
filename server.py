@@ -3,7 +3,7 @@ import sys
 import json
 import csv
 import subprocess
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -216,6 +216,27 @@ async def run_scan():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {e}")
 
+@app.post("/api/scan/stop")
+async def stop_scan():
+    global active_process
+    if active_process is not None and active_process.poll() is None:
+        try:
+            active_process.terminate()
+            # Wait up to 3 seconds for it to exit, then kill if needed
+            try:
+                active_process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                active_process.kill()
+            
+            # Append stop message to log
+            if os.path.exists(LOG_FILE):
+                with open(LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write("\n[Pipeline] Scan stopped by user.\n")
+            return {"success": True}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to stop pipeline: {e}")
+    return {"success": False, "detail": "No active scan running"}
+
 @app.get("/api/logs")
 async def get_logs():
     global active_process
@@ -267,6 +288,109 @@ async def expand_keywords():
             return {"success": False, "error": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def extract_text_from_pdf(file_bytes):
+    import io
+    from pypdf import PdfReader
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"Error parsing PDF: {e}")
+        return ""
+
+def analyze_resume_text(resume_text, api_key, model="gemini-1.5-flash"):
+    if not api_key:
+        return None, "No API key configured."
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    prompt = f"""Analyze the following candidate resume text.
+Extract:
+1. Target Keywords: A list of 4-6 most important skills, tools, or domain keywords (e.g. "urban planning", "QGIS", "architecture").
+2. Candidate Profile Summary: A concise, 2-3 sentence professional summary of the candidate's core expertise, experience level, and career focus.
+
+Resume Text:
+{resume_text}
+
+Respond ONLY with a JSON object in this format (no markdown code blocks, no backticks, just raw JSON):
+{{
+  "keywords": ["keyword1", "keyword2"],
+  "profile_summary": "Summary..."
+}}"""
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": prompt
+            }]
+        }]
+    }
+    try:
+        import requests
+        import re
+        r = requests.post(url, json=payload, headers=headers, timeout=20)
+        if r.status_code != 200:
+            return None, f"API HTTP Error {r.status_code}: {r.text}"
+            
+        res_json = r.json()
+        if 'candidates' not in res_json or not res_json['candidates']:
+            return None, f"Invalid response structure: {r.text}"
+            
+        text = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+            
+        try:
+            parsed = json.loads(text)
+            return parsed, None
+        except Exception as je:
+            return None, f"JSON parse error: {je}. Raw output was: {text}"
+            
+    except Exception as e:
+        return None, f"Connection/Network error: {e}"
+
+@app.post("/api/resume/upload")
+async def upload_resume(file: UploadFile = File(...)):
+    # Read file bytes
+    file_bytes = await file.read()
+    
+    # Extract text
+    text = extract_text_from_pdf(file_bytes)
+    if not text:
+        raise HTTPException(status_code=400, detail="Could not extract text from this PDF file.")
+        
+    # Load settings to get Gemini API key
+    settings_file = "settings.json"
+    api_key = ""
+    model = "gemini-flash-latest"
+    
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file, "r") as f:
+                saved = json.load(f)
+                api_key = saved.get("gemini_api_key", "")
+                model = saved.get("gemini_model", "gemini-flash-latest")
+        except Exception:
+            pass
+            
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Please enter and save a Gemini API Key in the settings first.")
+        
+    # Call Gemini to parse resume text
+    parsed, err = analyze_resume_text(text, api_key, model)
+    if err:
+        raise HTTPException(status_code=500, detail=f"AI parsing error: {err}")
+        
+    return {
+        "success": True,
+        "keywords": parsed.get("keywords", []),
+        "profile_summary": parsed.get("profile_summary", "")
+    }
 
 # Mount static folder
 app.mount("/", StaticFiles(directory=static_dir), name="static")
