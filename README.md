@@ -11,3 +11,5 @@ pinned: false
 # Gesamtkunstwerk ☭
 
 Minimalist Swiss Grid Job Board Scraper & Outreach Dashboard.
+
+<!-- GitHub Action Deployment Sync Trigger -->
