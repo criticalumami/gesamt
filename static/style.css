@@ -847,3 +847,42 @@ body {
 .toast.show {
     transform: translateX(-50%) translateY(0);
 }
+
+/* Override macOS default select controls and uploader button shapes */
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    border-radius: 0px !important;
+    background-image: url("data:image/svg+xml;utf8,<svg fill='black' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 16px;
+    padding-right: 30px !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    select {
+        background-image: url("data:image/svg+xml;utf8,<svg fill='white' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+    }
+}
+
+input[type="file"]::file-selector-button {
+    border: 1px solid var(--border);
+    background-color: var(--bg);
+    color: var(--text);
+    padding: 6px 12px;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 0px !important;
+    margin-right: 12px;
+    transition: background-color 0.2s ease;
+}
+
+input[type="file"]::file-selector-button:hover {
+    background-color: var(--border-subtle);
+}
+
