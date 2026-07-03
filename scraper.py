@@ -271,8 +271,8 @@ def expand_keywords_with_ai(profile_summary, current_keywords, api_key):
 And their current target keywords:
 {json.dumps(current_keywords)}
 
-Generate an expanded list of 6 to 10 highly relevant, specific job search keywords (in English) that this candidate should search for on job boards (such as LinkedIn, EURAXESS, Daleel Madani, etc.).
-Include both professional industry roles (e.g., urban planner, GIS specialist, architectural designer) and relevant academic/research terms (e.g., architectural researcher, lecturer in architecture, studio instructor).
+Generate an expanded list of 8 to 12 highly relevant job search keywords (in English) that this candidate should search for on job boards (such as LinkedIn, EURAXESS, Daleel Madani, etc.).
+You MUST output single-word root terms or short, distinct words (e.g., architect, planner, planning, designer, GIS, research, conservation, development, landscape, spatial, academic) rather than long compound multi-word phrases. This ensures maximum match coverage in the exact-matching pipeline.
 Respond ONLY with a JSON array of strings (no backticks, no markdown formatting), for example:
 ["keyword1", "keyword2", "keyword3"]"""
 
