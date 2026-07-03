@@ -1586,6 +1586,16 @@ def run_pipeline():
         else:
             print("\n[EURAXESS] Skipping (disabled in configuration).")
 
+    def run_oea():
+        if "OEA" in PLATFORMS:
+            try:
+                jobs = scrape_oea(existing_urls=existing_urls)
+                print(f"\n[OEA Beirut] Completed scraping. Found {len(jobs)} matches.")
+            except Exception as e:
+                print(f"\n[OEA Beirut] Scraper failed: {e}")
+        else:
+            print("\n[OEA] Skipping (disabled in configuration).")
+
     # Start threads concurrently
     import threading
     t_daleel = threading.Thread(target=run_daleel)
@@ -1594,6 +1604,7 @@ def run_pipeline():
     t_li = threading.Thread(target=run_linkedin)
     t_bayt = threading.Thread(target=run_bayt)
     t_euraxess = threading.Thread(target=run_euraxess)
+    t_oea = threading.Thread(target=run_oea)
     
     t_daleel.daemon = True
     t_un.daemon = True
@@ -1601,6 +1612,7 @@ def run_pipeline():
     t_li.daemon = True
     t_bayt.daemon = True
     t_euraxess.daemon = True
+    t_oea.daemon = True
     
     t_daleel.start()
     t_un.start()
@@ -1608,6 +1620,7 @@ def run_pipeline():
     t_li.start()
     t_bayt.start()
     t_euraxess.start()
+    t_oea.start()
     
     t_daleel.join()
     t_un.join()
@@ -1615,6 +1628,7 @@ def run_pipeline():
     t_li.join()
     t_bayt.join()
     t_euraxess.join()
+    t_oea.join()
     
     # Deduplicate final database entries and export to CSV
     print("\n====================================================")
@@ -1786,6 +1800,174 @@ Page Text Content:
         return {"success": True, "roles": matches_found}
     except Exception as e:
         return {"success": False, "error": f"Error parsing website roles with Gemini: {e}"}
+
+def decode_cf_email(cf_string):
+    try:
+        key = int(cf_string[:2], 16)
+        email = "".join([chr(int(cf_string[i:i+2], 16) ^ key) for i in range(2, len(cf_string), 2)])
+        return email
+    except Exception:
+        return ""
+
+def scrape_oea(existing_urls=None):
+    """
+    Scrapes the Order of Engineers and Architects (OEA) Beirut job portal.
+    Bypasses 403 Forbidden utilizing curl_cffi and extracts/decodes details of
+    relevant architectural/planning roles.
+    """
+    import urllib.parse
+    from bs4 import BeautifulSoup
+    from curl_cffi import requests
+    import re
+    
+    print("\n--- [OEA Beirut] Initiating scraper... ---")
+    if existing_urls is None:
+        existing_urls = []
+        
+    url = "https://www.oea.org.lb/career/"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    }
+
+    # Fetch main career page
+    try:
+        r = requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
+        if r.status_code != 200:
+            print(f"[OEA Beirut] Error: Failed to fetch career portal (status {r.status_code})")
+            return []
+    except Exception as e:
+        print(f"[OEA Beirut] Error connecting to career portal: {e}")
+        return []
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    careers = soup.find_all(class_="type-career")
+    print(f"[OEA Beirut] Found {len(careers)} total job listings on homepage.")
+    
+    matches_found = []
+    
+    for idx, card in enumerate(careers):
+        try:
+            # 1. Parse title and detail URL
+            title_h2 = card.find("h2", class_="job-title")
+            if not title_h2:
+                continue
+            title_a = title_h2.find("a")
+            if not title_a:
+                continue
+                
+            title = title_a.get_text(strip=True)
+            detail_url = title_a.get("href")
+            
+            # Normalise detail URL
+            if detail_url and not detail_url.startswith("http"):
+                detail_url = urllib.parse.urljoin(url, detail_url)
+                
+            if not detail_url or detail_url in existing_urls:
+                # Already processed or empty
+                continue
+                
+            # 2. Parse company
+            company = ""
+            company_el = card.find("h4", class_="company-title")
+            if company_el:
+                # remove the <span class="addon"> element containing "عبر"
+                company_el_copy = BeautifulSoup(str(company_el), "html.parser")
+                addon = company_el_copy.find("span", class_="addon")
+                if addon:
+                    addon.decompose()
+                company = company_el_copy.get_text(strip=True)
+            else:
+                company = "OEA Beirut"
+
+            # 3. Parse initial deadline if present
+            deadline = "See listing"
+            deadline_el = card.find(class_="deadline-time")
+            if deadline_el:
+                deadline = deadline_el.get_text(strip=True)
+                
+            # 4. Check if listing title matches keywords before executing full detail fetch
+            # We also check if it's architectural/planning category based on card classes
+            card_classes = card.get("class", [])
+            is_architectural = any("architect" in str(cls).lower() for cls in card_classes)
+            
+            if not (matches_profile(title, "", "Lebanon") or is_architectural):
+                # If the title is completely irrelevant, skip
+                continue
+                
+            print(f"[OEA Beirut] Processing relevant job: '{title}' by '{company}'")
+            
+            # Fetch detail page
+            try:
+                import time
+                time.sleep(1.5) # Polite delay
+                dr = requests.get(detail_url, headers=headers, impersonate="chrome120", timeout=20)
+                if dr.status_code == 200:
+                    dsoup = BeautifulSoup(dr.text, "html.parser")
+                    
+                    # Extract email address
+                    email = ""
+                    # Check for data-cfemail
+                    cf_el = dsoup.find(attrs={"data-cfemail": True})
+                    if cf_el:
+                        email = decode_cf_email(cf_el["data-cfemail"])
+                    else:
+                        # Fallback regex search for standard emails in body text
+                        body_txt = dsoup.body.get_text() if dsoup.body else ""
+                        email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", body_txt)
+                        if email_match:
+                            email = email_match.group(0)
+
+                    # Extract full description
+                    article = dsoup.find("article")
+                    if article:
+                        desc = article.get_text(separator="\n", strip=True)
+                    else:
+                        desc = dsoup.body.get_text(separator="\n", strip=True) if dsoup.body else "See listing for details."
+                        
+                    # Extract location
+                    loc = "Lebanon"
+                    # Try finding location in meta tags or page text
+                    for meta_item in dsoup.find_all(class_=lambda x: x and "location" in str(x).lower()):
+                        loc_text = meta_item.get_text(strip=True)
+                        if loc_text:
+                            loc = loc_text
+                            break
+                            
+                    # Perform profile matching and AI scoring on full details
+                    if matches_profile(title, desc, loc):
+                        score, reason, reqs = get_ai_evaluation(title, desc, loc, job_url=detail_url)
+                        
+                        # Add deobfuscated email and contact details directly in description
+                        clean_desc = desc
+                        if email:
+                            clean_desc = f"Contact Email: {email}\n\n" + clean_desc
+                            
+                        match = {
+                            "Platform": f"OEA - {company}" if company else "OEA",
+                            "Title": title,
+                            "Location": loc,
+                            "Description": clean_description(clean_desc),
+                            "Deadline": deadline,
+                            "URL": detail_url,
+                            "Match Score": score,
+                            "Match Reason": reason,
+                            "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
+                            "Status": "New"
+                        }
+                        db.save_job(match)
+                        matches_found.append(match)
+                        print(f"  => MATCH FOUND: '{title}' (Score: {score})")
+            except Exception as de:
+                print(f"  Warning: failed to process details for {detail_url}: {de}")
+        except Exception as ce:
+            print(f"  Warning: failed to parse listing card: {ce}")
+            
+    print(f"[OEA Beirut] Completed. Discovered {len(matches_found)} matches.")
+    return matches_found
 
 if __name__ == "__main__":
     run_pipeline()
