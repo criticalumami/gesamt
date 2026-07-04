@@ -7,11 +7,16 @@ import threading
 from datetime import datetime
 import pandas as pd
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
 import importlib
 import db
 importlib.reload(db)
 db.init_db()
+
+# --- Constants ---
+ALL_STATUSES = ["New", "Applied", "Interviewing", "Offer", "Rejected", "Archived"]
 
 def extract_text_from_pdf(file_bytes):
     import io
@@ -96,7 +101,7 @@ def make_expandable_text(text_str, max_len=60):
 def update_job_status(url, new_status):
     try:
         db.update_job_status(url, new_status)
-        st.toast(f"Moved to {new_status}!")
+        st.toast(f"Status updated to {new_status}!")
         time.sleep(0.5)
         st.rerun()
     except Exception as e:
@@ -295,10 +300,10 @@ details.expandable-details .action-link {
     display: inline-block;
 }
 details.expandable-details .action-link::after {
-    content: "↓ Show Description";
+    content: "\2193 Show Description";
 }
 details.expandable-details[open] .action-link::after {
-    content: "↑ Hide Description";
+    content: "\2191 Hide Description";
 }
 details.expandable-details[open] .preview-text {
     display: none !important;
@@ -536,6 +541,92 @@ header_title = "Gesamtkunstwerk \u262d"
 st.markdown(f'<div class="header-row"><div class="app-title">{header_title}</div></div>', unsafe_allow_html=True)
 
 
+def render_analytics_tab(df):
+    st.subheader("Application Analytics")
+
+    if df.empty:
+        st.info("No job data available to analyze. Scan for jobs to get started.")
+        return
+
+    # --- KPIs ---
+    total_matches = len(df)
+    applied_count = len(df[df["Status"] == "Applied"])
+    interview_count = len(df[df["Status"] == "Interviewing"])
+    offer_count = len(df[df["Status"] == "Offer"])
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Matches", total_matches)
+    with col2:
+        st.metric("Applications Sent", applied_count)
+    with col3:
+        st.metric("Interviews", interview_count)
+    with col4:
+        st.metric("Offers", offer_count)
+
+    st.markdown("---")
+
+    # --- Charts ---
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        # Application Funnel
+        st.markdown("##### Application Funnel")
+        funnel_stages = ["New", "Applied", "Interviewing", "Offer"]
+        funnel_counts = [len(df[df["Status"] == stage]) for stage in funnel_stages]
+        
+        # Add counts of stages that lead into the next one
+        funnel_counts[0] += sum(funnel_counts[1:]) # All applied/interviewing/offers were once 'New'
+        funnel_counts[1] += sum(funnel_counts[2:]) # All interviewing/offers were once 'Applied'
+        funnel_counts[2] += sum(funnel_counts[3:]) # All offers were once 'Interviewing'
+
+        if sum(funnel_counts) > 0:
+            fig_funnel = go.Figure(go.Funnel(
+                y=funnel_stages,
+                x=funnel_counts,
+                textinfo="value+percent initial",
+                marker={"color": ["#d3d3d3", "#a9a9a9", "#708090", accent_light]}
+            ))
+            fig_funnel.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=350)
+            st.plotly_chart(fig_funnel, use_container_width=True)
+        else:
+            st.caption("No data for funnel.")
+
+    with col_b:
+        # Matches by Platform
+        st.markdown("##### Matches by Platform")
+        platform_counts = df["Platform"].value_counts()
+        if not platform_counts.empty:
+            fig_pie = px.pie(
+                platform_counts, 
+                values=platform_counts.values, 
+                names=platform_counts.index,
+                hole=0.4
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            fig_pie.update_layout(showlegend=False, margin=dict(l=20, r=20, t=30, b=20), height=350)
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.caption("No platform data.")
+
+    # Applications over time
+    st.markdown("##### Applications Over Time")
+    df_applied = df[df["Status"] == "Applied"].copy()
+    if not df_applied.empty:
+        df_applied["DateAdded"] = pd.to_datetime(df_applied["DateAdded"])
+        apps_by_day = df_applied.resample('D', on='DateAdded').size().reset_index(name='count')
+        
+        fig_timeline = px.bar(
+            apps_by_day, 
+            x='DateAdded', 
+            y='count',
+            labels={'DateAdded': 'Date', 'count': 'Applications Sent'}
+        )
+        fig_timeline.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=300)
+        st.plotly_chart(fig_timeline, use_container_width=True)
+    else:
+        st.caption("No applications sent yet.")
+
 
 def render_custom_tab():
     import db
@@ -710,9 +801,18 @@ def render_custom_tab():
         st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
 
-tab_global, tab_custom = st.tabs(["Global", "Custom"])
+# --- Main App ---
 
-with tab_global:
+# Load data once, upfront
+try:
+    jobs_df = db.get_all_jobs_df()
+except Exception as e:
+    st.error(f"Error loading jobs: {e}")
+    jobs_df = pd.DataFrame()
+
+tab_feed, tab_analytics, tab_custom = st.tabs(["Feed", "Analytics", "Custom"])
+
+with tab_feed:
     # Expandable Settings Section
     with st.expander("Filter Configuration", expanded=False):
         # Load settings from settings.json
@@ -740,7 +840,7 @@ with tab_global:
         with col_kw_1:
             new_kw = st.text_input("Target Keywords (comma separated)", kw_str)
         with col_kw_2:
-            btn_label = "Auto-Expand" if not USE_EMOJIS else "✨ Auto-Expand"
+            btn_label = "Auto-Expand" if not USE_EMOJIS else "\u2728 Auto-Expand"
             if st.button(btn_label, help="Use Gemini to suggest highly relevant keywords for your profile"):
                 gemini_key_for_expand = settings.get("gemini_api_key", "")
                 if not gemini_key_for_expand:
@@ -895,13 +995,6 @@ with tab_global:
         with st.expander("Scan Logs", expanded=True):
             st.code(st.session_state["scan_logs"])
 
-    # Load data
-    try:
-        jobs_df = db.get_all_jobs_df()
-    except Exception as e:
-        st.error(f"Error loading jobs: {e}")
-        jobs_df = pd.DataFrame()
-
     # Trigger action
     if trigger_scrape and not st.session_state.get("running"):
         st.session_state["scan_logs"] = ""
@@ -915,7 +1008,7 @@ with tab_global:
             process = subprocess.Popen(
                 [python_bin, "-u", "scraper.py"],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.STDERR,
                 text=True
             )
 
@@ -945,7 +1038,7 @@ with tab_global:
             st.error(f"Failed to start scraper: {ex}")
 
     if st.session_state.get("running"):
-        scan_header = "Scanning Job Boards..." if not USE_EMOJIS else "Scanning Job Boards... ⚡"
+        scan_header = "Scanning Job Boards..." if not USE_EMOJIS else "Scanning Job Boards... \u26A1"
         st.subheader(scan_header)
 
         # Stop button
@@ -1050,33 +1143,39 @@ with tab_global:
         # Ensure Match Score is numeric for filtering
         jobs_df["Match Score"] = pd.to_numeric(jobs_df["Match Score"], errors="coerce").fillna(0).astype(int)
 
-        # Score threshold slider + sort controls side by side
-        col_filter, col_sort = st.columns([3, 2])
-        with col_filter:
+        # --- Filter Controls ---
+        col1, col2, col3 = st.columns([2, 2, 1.5])
+        with col1:
+            status_filter = st.multiselect(
+                "Filter by Status",
+                options=ALL_STATUSES,
+                default=["New", "Applied", "Interviewing"]
+            )
+        with col2:
             min_score = st.slider(
                 "Minimum Match Score",
                 min_value=0, max_value=100, value=0, step=5,
-                format="%d%%",
-                help="Hide jobs below this AI match score. (The downloaded CSV will still contain all matches.)"
+                format="%d%%"
             )
-        with col_sort:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        with col3:
             sort_by = st.selectbox(
                 "Sort by",
-                options=["Match Score ↓", "Deadline ↑", "Platform A–Z", "Date Added ↓"],
+                options=["Date Added \2193", "Match Score \2193", "Deadline \2191", "Platform A\u2013Z"],
                 index=0,
-                label_visibility="collapsed"
             )
-
+        
+        # Apply filters
         filtered_df = jobs_df[jobs_df["Match Score"] >= min_score].copy()
+        if status_filter:
+            filtered_df = filtered_df[filtered_df["Status"].isin(status_filter)]
 
         # Apply sort
         def sort_dataframe(df):
             if df.empty:
                 return df
-            if sort_by == "Match Score ↓":
+            if sort_by == "Match Score \2193":
                 return df.sort_values("Match Score", ascending=False)
-            elif sort_by == "Deadline ↑":
+            elif sort_by == "Deadline \2191":
                 from dateutil import parser as dparser
                 def parse_deadline(val):
                     try:
@@ -1087,22 +1186,17 @@ with tab_global:
                 df["_deadline_sort"] = df["Deadline"].apply(parse_deadline)
                 df = df.sort_values("_deadline_sort").drop(columns=["_deadline_sort"])
                 return df
-            elif sort_by == "Platform A–Z":
+            elif sort_by == "Platform A\u2013Z":
                 return df.sort_values("Platform")
-            else:  # Date Added ↓ — show newest matches first
-                return df.iloc[::-1]
+            else:  # Date Added \2193 \u2014 show newest matches first
+                return df.sort_values("DateAdded", ascending=False)
 
         filtered_df = sort_dataframe(filtered_df)
-
-        # Group jobs by status (on filtered + sorted set)
-        new_jobs = filtered_df[filtered_df["Status"] == "New"]
-        applied_jobs = filtered_df[filtered_df["Status"] == "Applied"]
-        archived_jobs = filtered_df[filtered_df["Status"] == "Archived"]
 
         # Download button always exports full unfiltered dataset
         csv_data = jobs_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Download Results (CSV)",
+            label="Download All Results (CSV)",
             data=csv_data,
             file_name="gesamtkunstwerk_job_matches.csv",
             mime="text/csv",
@@ -1110,18 +1204,8 @@ with tab_global:
         )
         st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
-        # Define CRM status tabs
-        tab_new_label = f"New Matches ({len(new_jobs)})" if not USE_EMOJIS else f"New Matches \U0001F3AF ({len(new_jobs)})"
-        tab_applied_label = f"Applied ({len(applied_jobs)})" if not USE_EMOJIS else f"Applied \U0001F4DD ({len(applied_jobs)})"
-        tab_archived_label = f"Archived ({len(archived_jobs)})" if not USE_EMOJIS else f"Archived \U0001F4C1 ({len(archived_jobs)})"
-        tab_new, tab_applied, tab_archived = st.tabs([
-            tab_new_label,
-            tab_applied_label,
-            tab_archived_label
-        ])
-
         # Card rendering function
-        def render_job_card(row, idx, tab_name):
+        def render_job_card(row, idx):
             platform = row["Platform"]
             title = row["Title"]
             location = row["Location"]
@@ -1130,6 +1214,7 @@ with tab_global:
             deadline = row.get("Deadline", "N/A")
             if pd.isna(deadline): deadline = "N/A"
             url = row["URL"]
+            current_status = row["Status"]
 
             score = row.get("Match Score", 0)
             try:
@@ -1156,8 +1241,8 @@ with tab_global:
                 </div>
                 <div class="card-meta">
                     <span class="badge badge-source">[{platform}]</span>
-                    <span>{"Location: " if not USE_EMOJIS else "\U0001F4CD "}{location}</span>
-                    <span>{"Deadline: " if not USE_EMOJIS else "\U0001F4C5 Deadline: "}{deadline}</span>
+                    <span>{"                    "}<span>{"Location: " if not USE_EMOJIS else "\U0001F4CD "}{location}</span>
+{"                    "}<span>{"Deadline: " if not USE_EMOJIS else "\U0001F4C5 Deadline: "}{deadline}</span>
                 </div>
                 <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
                     <strong>Reason:</strong> {make_expandable_text(reason, 60)}
@@ -1173,44 +1258,34 @@ with tab_global:
             st.markdown(card_html, unsafe_allow_html=True)
 
             # Action buttons row
-            col1, col2, col_spacer = st.columns([3, 3, 6])
+            col1, col2 = st.columns([2, 3])
             with col1:
-                if tab_name == "new":
-                    if st.button("Mark as Applied", key=f"btn_apply_{tab_name}_{idx}", use_container_width=True):
-                        update_job_status(url, "Applied")
-                elif tab_name in ("applied", "archived"):
-                    if st.button("Move to New", key=f"btn_new_{tab_name}_{idx}", use_container_width=True):
-                        update_job_status(url, "New")
-            with col2:
-                if tab_name in ("new", "applied"):
-                    if st.button("Archive", key=f"btn_archive_{tab_name}_{idx}", use_container_width=True):
-                        update_job_status(url, "Archived")
-                elif tab_name == "archived":
-                    if st.button("Delete", key=f"btn_delete_{tab_name}_{idx}", use_container_width=True):
-                        delete_job_by_url(url)
+                try:
+                    current_index = ALL_STATUSES.index(current_status)
+                except ValueError:
+                    current_index = 0 # Default to 'New'
+
+                new_status = st.selectbox(
+                    "Status",
+                    options=ALL_STATUSES,
+                    index=current_index,
+                    key=f"status_{idx}",
+                    label_visibility="collapsed"
+                )
+                if new_status != current_status:
+                    update_job_status(url, new_status)
+            
             st.markdown("<div style='margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-subtle);'></div>", unsafe_allow_html=True)
 
-        with tab_new:
-            if new_jobs.empty:
-                st.markdown("<div style='color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;'>No new matches.</div>", unsafe_allow_html=True)
-            else:
-                for idx, row in new_jobs.reset_index().iterrows():
-                    render_job_card(row, idx, "new")
+        if filtered_df.empty:
+            st.markdown("<div style='color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;'>No jobs match the current filters.</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;'>Showing {len(filtered_df)} of {len(jobs_df)} total jobs.</div>", unsafe_allow_html=True)
+            for idx, row in filtered_df.reset_index().iterrows():
+                render_job_card(row, idx)
 
-        with tab_applied:
-            if applied_jobs.empty:
-                st.markdown("<div style='color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;'>No applications tracked yet.</div>", unsafe_allow_html=True)
-            else:
-                for idx, row in applied_jobs.reset_index().iterrows():
-                    render_job_card(row, idx, "applied")
-
-        with tab_archived:
-            if archived_jobs.empty:
-                st.markdown("<div style='color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;'>Archive is empty.</div>", unsafe_allow_html=True)
-            else:
-                for idx, row in archived_jobs.reset_index().iterrows():
-                    render_job_card(row, idx, "archived")
-
+with tab_analytics:
+    render_analytics_tab(jobs_df)
 
 with tab_custom:
     render_custom_tab()

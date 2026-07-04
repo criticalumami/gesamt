@@ -137,9 +137,10 @@ def get_all_jobs_df():
             match_score as [Match Score],
             match_reason as [Match Reason],
             key_requirements as [Key Requirements],
-            status as Status
+            status as Status,
+            date_added as DateAdded
         FROM jobs
-        WHERE status IN ('New', 'Applied', 'Archived')
+        WHERE status NOT IN ('Expired')
         ORDER BY date_added DESC
     """, conn)
     conn.close()
