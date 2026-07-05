@@ -591,8 +591,7 @@ async function autoExpandKeywords() {
         }
     } catch (e) {
         showToast('Expansion Failed: ' + e.message, 'error');
-    }
-} finally {
+    } finally {
         btn.disabled = false;
         btn.textContent = 'Auto-Expand';
     }
