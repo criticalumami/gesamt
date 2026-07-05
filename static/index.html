@@ -3,27 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gesamtkunstwerk ☭</title>
-    <meta name="description" content="Ist der Krieg gegen dich, Prolet!">
-    
-    <!-- Open Graph / Facebook Link Previews -->
-    <meta property="og:title" content="Gesamtkunstwerk ☭">
-    <meta property="og:description" content="Ist der Krieg gegen dich, Prolet!">
-    <meta property="og:image" content="https://mzrxa-gesamtkunstwerk.hf.space/red.png">
-    <meta property="og:url" content="https://mzrxa-gesamtkunstwerk.hf.space">
-    <meta property="og:type" content="website">
-
-    <!-- Twitter Link Previews -->
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Gesamtkunstwerk ☭">
-    <meta name="twitter:description" content="Ist der Krieg gegen dich, Prolet!">
-    <meta name="twitter:image" content="https://mzrxa-gesamtkunstwerk.hf.space/red.png">
-
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=1.0.1">
+    <title>Gesamtkunstwerk</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="favicon.png" type="image/png">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <!-- Top Sleek Glass Navigation -->
@@ -33,6 +16,7 @@
             <nav class="tab-navigation">
                 <button class="nav-btn active" id="tab-global-btn">Global Feed</button>
                 <button class="nav-btn" id="tab-custom-btn">Custom Directory</button>
+                <button class="nav-btn" id="tab-analytics-btn">Analytics</button>
                 <button class="nav-btn" id="tab-settings-btn">Settings</button>
             </nav>
         </div>
@@ -93,7 +77,12 @@
             </div>
         </section>
 
-        <!-- 3. Configuration & Settings Tab -->
+        <!-- 3. Analytics Tab -->
+        <section class="tab-panel" id="panel-analytics">
+            <!-- Analytics content will be rendered here by app.js -->
+        </section>
+
+        <!-- 4. Configuration & Settings Tab -->
         <section class="tab-panel" id="panel-settings">
             <div class="settings-grid">
                 <!-- Settings Left Column -->

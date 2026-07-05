@@ -88,6 +88,104 @@ async def serve_index():
         return FileResponse(index_path)
     return HTMLResponse("<h1>Gesamtkunstwerk Front-end not found. Create index.html inside /static</h1>")
 
+@app.get("/api/analytics")
+async def get_analytics_data():
+    try:
+        df = db.get_all_jobs_df()
+        if df.empty:
+            return {
+                "kpis": {"total_matches": 0, "applied_count": 0, "interview_count": 0, "offer_count": 0},
+                "funnel": {"stages": [], "counts": []},
+                "platforms": {"labels": [], "values": []},
+                "timeline": {"dates": [], "counts": []}
+            }
+
+        # KPIs
+        total_matches = len(df)
+        applied_count = len(df[df["Status"] == "Applied"])
+        interview_count = len(df[df["Status"] == "Interviewing"])
+        offer_count = len(df[df["Status"] == "Offer"])
+        kpis = {
+            "total_matches": total_matches,
+            "applied_count": applied_count,
+            "interview_count": interview_count,
+            "offer_count": offer_count
+        }
+
+        # Funnel Data
+        funnel_stages = ["New", "Applied", "Interviewing", "Offer"]
+        funnel_counts = [len(df[df["Status"] == stage]) for stage in funnel_stages]
+        funnel_counts[0] += sum(funnel_counts[1:])
+        funnel_counts[1] += sum(funnel_counts[2:])
+        funnel_counts[2] += sum(funnel_counts[3:])
+        funnel_data = {"stages": funnel_stages, "counts": funnel_counts}
+
+        # Platform Data
+        platform_counts = df["Platform"].value_counts()
+        platform_data = {"labels": platform_counts.index.tolist(), "values": platform_counts.values.tolist()}
+
+        # Timeline Data
+        df_applied = df[df["Status"] == "Applied"].copy()
+        if not df_applied.empty:
+            df_applied["DateAdded"] = pd.to_datetime(df_applied["DateAdded"])
+            apps_by_day = df_applied.resample('D', on='DateAdded').size()
+            timeline_data = {"dates": apps_by_day.index.strftime('%Y-%m-%d').tolist(), "counts": apps_by_day.values.tolist()}
+        else:
+            timeline_data = {"dates": [], "counts": []}
+            
+        return {"kpis": kpis, "funnel": funnel_data, "platforms": platform_data, "timeline": timeline_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics")
+async def get_analytics_data():
+    try:
+        df = db.get_all_jobs_df()
+        if df.empty:
+            return {
+                "kpis": {"total_matches": 0, "applied_count": 0, "interview_count": 0, "offer_count": 0},
+                "funnel": {"stages": [], "counts": []},
+                "platforms": {"labels": [], "values": []},
+                "timeline": {"dates": [], "counts": []}
+            }
+
+        # KPIs
+        total_matches = len(df)
+        applied_count = len(df[df["Status"] == "Applied"])
+        interview_count = len(df[df["Status"] == "Interviewing"])
+        offer_count = len(df[df["Status"] == "Offer"])
+        kpis = {
+            "total_matches": total_matches,
+            "applied_count": applied_count,
+            "interview_count": interview_count,
+            "offer_count": offer_count
+        }
+
+        # Funnel Data
+        funnel_stages = ["New", "Applied", "Interviewing", "Offer"]
+        funnel_counts = [len(df[df["Status"] == stage]) for stage in funnel_stages]
+        funnel_counts[0] += sum(funnel_counts[1:])
+        funnel_counts[1] += sum(funnel_counts[2:])
+        funnel_counts[2] += sum(funnel_counts[3:])
+        funnel_data = {"stages": funnel_stages, "counts": funnel_counts}
+
+        # Platform Data
+        platform_counts = df["Platform"].value_counts()
+        platform_data = {"labels": platform_counts.index.tolist(), "values": platform_counts.values.tolist()}
+
+        # Timeline Data
+        df_applied = df[df["Status"] == "Applied"].copy()
+        if not df_applied.empty:
+            df_applied["DateAdded"] = pd.to_datetime(df_applied["DateAdded"])
+            apps_by_day = df_applied.resample('D', on='DateAdded').size()
+            timeline_data = {"dates": apps_by_day.index.strftime('%Y-%m-%d').tolist(), "counts": apps_by_day.values.tolist()}
+        else:
+            timeline_data = {"dates": [], "counts": []}
+            
+        return {"kpis": kpis, "funnel": funnel_data, "platforms": platform_data, "timeline": timeline_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/jobs")
 async def get_jobs():
     try:
@@ -100,6 +198,18 @@ async def get_jobs():
         df = df.fillna("")
         jobs_list = df.to_dict(orient="records")
         return jobs_list
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class JobStatusUpdatePayload(BaseModel):
+    url: str
+    status: str
+
+@app.post("/api/jobs/update_status")
+async def update_job_status_api(payload: JobStatusUpdatePayload):
+    try:
+        db.update_job_status(payload.url, payload.status)
+        return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

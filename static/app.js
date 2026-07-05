@@ -5,6 +5,7 @@ let state = {
     jobs: [],
     offices: [],
     settings: {},
+    analytics: null,
     activeTab: 'global',
     searchQuery: '',
     customSearchQuery: '',
@@ -13,16 +14,19 @@ let state = {
     logInterval: null
 };
 
-// Available job boards for checkbox rendering
+// Constants
 const PLATFORM_OPTIONS = ["Daleel Madani", "UN Careers", "ReliefWeb", "LinkedIn", "Bayt.com", "EURAXESS", "OEA", "Jobs for Lebanon"];
+const ALL_STATUSES = ["New", "Applied", "Interviewing", "Offer", "Rejected", "Archived"];
 
 // DOM elements
 const el = {
     tabGlobalBtn: document.getElementById('tab-global-btn'),
     tabCustomBtn: document.getElementById('tab-custom-btn'),
+    tabAnalyticsBtn: document.getElementById('tab-analytics-btn'),
     tabSettingsBtn: document.getElementById('tab-settings-btn'),
     panelGlobal: document.getElementById('panel-global'),
     panelCustom: document.getElementById('panel-custom'),
+    panelAnalytics: document.getElementById('panel-analytics'),
     panelSettings: document.getElementById('panel-settings'),
     globalListingsGrid: document.getElementById('global-listings-grid'),
     customDirectoryGrid: document.getElementById('custom-directory-grid'),
@@ -51,9 +55,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // Tab Switcher
 function initTabs() {
     const tabs = [
-        { btn: el.tabGlobalBtn, panel: el.panelGlobal, name: 'global' },
-        { btn: el.tabCustomBtn, panel: el.panelCustom, name: 'custom' },
-        { btn: el.tabSettingsBtn, panel: el.panelSettings, name: 'settings' }
+        { btn: el.tabGlobalBtn, panel: el.panelGlobal, name: 'global', loader: loadJobs },
+        { btn: el.tabCustomBtn, panel: el.panelCustom, name: 'custom', loader: loadOffices },
+        { btn: el.tabAnalyticsBtn, panel: el.panelAnalytics, name: 'analytics', loader: loadAnalytics },
+        { btn: el.tabSettingsBtn, panel: el.panelSettings, name: 'settings', loader: null }
     ];
 
     tabs.forEach(t => {
@@ -66,48 +71,39 @@ function initTabs() {
             t.panel.classList.add('active');
             state.activeTab = t.name;
 
-            // Reload relevant lists
-            if (t.name === 'global') loadJobs();
-            if (t.name === 'custom') loadOffices();
+            if (t.loader) {
+                t.loader();
+            }
         });
     });
 }
 
 // Event Listeners
 function initEventListeners() {
-    // Search inputs
     el.globalSearchInput.addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
         renderJobs();
     });
-
     el.customSearchInput.addEventListener('input', (e) => {
         state.customSearchQuery = e.target.value.toLowerCase();
         renderOffices();
     });
-
     el.customAddressSelect.addEventListener('change', (e) => {
         state.selectedAddress = e.target.value;
         renderOffices();
     });
-
-    // Scraper control buttons
     el.scanJobBoardsBtn.addEventListener('click', startGlobalScan);
     el.stopScanBtn.addEventListener('click', stopGlobalScanCall);
     el.clearResultsBtn.addEventListener('click', clearAllResults);
     el.terminalCloseBtn.addEventListener('click', () => el.terminalContainer.classList.add('hidden'));
-
-    // Drawer closing
     el.detailDrawerClose.addEventListener('click', closeDrawer);
     el.detailDrawerOverlay.addEventListener('click', closeDrawer);
-
-    // Save configurations
     document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
     document.getElementById('btn-auto-expand').addEventListener('click', autoExpandKeywords);
     document.getElementById('settings-resume').addEventListener('change', uploadResumeFile);
 }
 
-// API Fetch Helpers
+// --- API & Data Loading ---
 async function loadAllData() {
     await loadSettings();
     await loadJobs();
@@ -120,16 +116,9 @@ async function loadSettings() {
         if (response.ok) {
             state.settings = await response.json();
             renderSettingsPanel();
-            
-            // Pre-populate global feed search box with target keywords
-            if (state.settings.keywords && state.settings.keywords.length > 0) {
-                const kwStr = state.settings.keywords.join(', ');
-                el.globalSearchInput.value = kwStr;
-                state.searchQuery = kwStr.toLowerCase();
-            }
         }
     } catch (e) {
-        showToast('Error loading settings: ' + e.message);
+        showToast('Error loading settings: ' + e.message, 'error');
     }
 }
 
@@ -141,7 +130,7 @@ async function loadJobs() {
             renderJobs();
         }
     } catch (e) {
-        showToast('Error loading jobs: ' + e.message);
+        showToast('Error loading jobs: ' + e.message, 'error');
     }
 }
 
@@ -154,17 +143,32 @@ async function loadOffices() {
             renderOffices();
         }
     } catch (e) {
-        showToast('Error loading offices: ' + e.message);
+        showToast('Error loading offices: ' + e.message, 'error');
     }
 }
 
-// Renderers
+async function loadAnalytics() {
+    el.panelAnalytics.innerHTML = '<div class="loading-state">Loading Analytics...</div>';
+    try {
+        const response = await fetch('/api/analytics');
+        if (response.ok) {
+            state.analytics = await response.json();
+            renderAnalytics();
+        } else {
+            el.panelAnalytics.innerHTML = '<div class="empty-state">Failed to load analytics data.</div>';
+        }
+    } catch (e) {
+        el.panelAnalytics.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+    }
+}
+
+// --- Render Functions ---
 function renderJobs() {
     const grid = el.globalListingsGrid;
     grid.innerHTML = '';
 
-    // Apply client side search/filter splitting by commas/spaces (OR mode)
-    const terms = state.searchQuery.split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+    const terms = state.searchQuery.split(/[
+,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
     const filtered = state.jobs.filter(job => {
         const text = `${job.Title} ${job.Platform} ${job.Location} ${job.Description}`.toLowerCase();
         if (terms.length === 0) return true;
@@ -172,56 +176,141 @@ function renderJobs() {
     });
 
     if (filtered.length === 0) {
-        grid.innerHTML = `
-            <div class="empty-state">
-                <p class="empty-text">No matching jobs found in feed.</p>
-            </div>`;
+        grid.innerHTML = '<div class="empty-state"><p class="empty-text">No matching jobs found.</p></div>';
         return;
     }
 
     filtered.forEach(job => {
         const card = document.createElement('div');
         card.className = 'card';
-        card.addEventListener('click', () => openDrawer(job));
-
-        // Format date/deadline
+        
         const score = job["Match Score"] !== undefined ? job["Match Score"] : 0;
         const scoreClass = score < 60 ? 'card-score low-match' : 'card-score';
 
+        const statusOptions = ALL_STATUSES.map(s => `<option value="${s}" ${job.Status === s ? 'selected' : ''}>${s}</option>`).join('');
+
         card.innerHTML = `
-            <div class="card-header">
-                <span class="card-badge">${job.Platform}</span>
-                <span class="${scoreClass}">Match: ${score}%</span>
+            <div class="card-clickable" onclick="openDrawer(JSON.parse(decodeURIComponent('${encodeURIComponent(JSON.stringify(job))}')))">
+                <div class="card-header">
+                    <span class="card-badge">${job.Platform}</span>
+                    <span class="${scoreClass}">Match: ${score}%</span>
+                </div>
+                <div>
+                    <h3 class="card-title">${job.Title}</h3>
+                    <p class="card-description">${stripHtml(job.Description)}</p>
+                </div>
+                <div class="card-footer">
+                    <span class="card-footer-item">📍 ${job.Location || 'N/A'}</span>
+                    <span class="card-footer-item">📅 ${job.Deadline || 'N/A'}</span>
+                </div>
             </div>
-            <div>
-                <h3 class="card-title">${job.Title}</h3>
-                <div class="card-company">${job.Platform.includes("OEA - ") ? job.Platform.replace("OEA - ", "") : "Target Job"}</div>
-                <p class="card-description">${stripHtml(job.Description)}</p>
-            </div>
-            <div class="card-footer">
-                <span class="card-footer-item">📍 ${job.Location || 'Lebanon'}</span>
-                <span class="card-footer-item">📅 ${job.Deadline || 'See listing'}</span>
+            <div class="card-actions">
+                <select class="status-select" onchange="updateJobStatus('${job.URL}', this.value)">
+                    ${statusOptions}
+                </select>
             </div>
         `;
         grid.appendChild(card);
     });
 }
 
+function renderAnalytics() {
+    const panel = el.panelAnalytics;
+    const data = state.analytics;
+
+    if (!data) {
+        panel.innerHTML = '<div class="empty-state">No analytics data available.</div>';
+        return;
+    }
+
+    panel.innerHTML = `
+        <div class="analytics-header">
+            <h2>Analytics Dashboard</h2>
+        </div>
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-value">${data.kpis.total_matches}</div>
+                <div class="kpi-label">Total Matches</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">${data.kpis.applied_count}</div>
+                <div class="kpi-label">Applications Sent</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">${data.kpis.interview_count}</div>
+                <div class="kpi-label">Interviews</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">${data.kpis.offer_count}</div>
+                <div class="kpi-label">Offers</div>
+            </div>
+        </div>
+        <div class="chart-grid">
+            <div class="chart-container">
+                <h3>Application Funnel</h3>
+                <canvas id="funnel-chart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Matches by Platform</h3>
+                <canvas id="platform-chart"></canvas>
+            </div>
+        </div>
+        <div class="chart-grid-full">
+            <div class="chart-container">
+                <h3>Applications Over Time</h3>
+                <canvas id="timeline-chart"></canvas>
+            </div>
+        </div>
+    `;
+
+    // Init charts
+    try {
+        new Chart(document.getElementById('funnel-chart'), {
+            type: 'bar',
+            data: {
+                labels: data.funnel.stages,
+                datasets: [{
+                    label: 'Count',
+                    data: data.funnel.counts,
+                    backgroundColor: ['#e5e7eb', '#9ca3af', '#6b7280', '#1f2937'],
+                }]
+            },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
+        });
+
+        new Chart(document.getElementById('platform-chart'), {
+            type: 'doughnut',
+            data: {
+                labels: data.platforms.labels,
+                datasets: [{
+                    data: data.platforms.values
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        new Chart(document.getElementById('timeline-chart'), {
+            type: 'bar',
+            data: {
+                labels: data.timeline.dates,
+                datasets: [{
+                    label: 'Applications Sent',
+                    data: data.timeline.counts,
+                    backgroundColor: '#6b7280'
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day' } } } }
+        });
+    } catch (e) {
+        console.error("Chart.js error:", e);
+        showToast('Could not render charts.', 'error');
+    }
+}
+
 function populateAddressDropdown() {
     const select = el.customAddressSelect;
-    select.innerHTML = '<option value="">All Locations / Neighborhoods</option>';
-    
-    // Extract unique neighborhoods/addresses
-    const addresses = new Set();
-    state.offices.forEach(office => {
-        if (office.Address) {
-            // Take the last part of address as neighborhood, or full string if short
-            const parts = office.Address.split(',');
-            const neighborhood = parts[0].trim();
-            if (neighborhood) addresses.add(neighborhood);
-        }
-    });
-
+    select.innerHTML = '<option value="">All Locations</option>';
+    const addresses = new Set(state.offices.map(o => o.Address.split(',')[0].trim()).filter(Boolean));
     addresses.forEach(addr => {
         const opt = document.createElement('option');
         opt.value = addr;
@@ -242,10 +331,7 @@ function renderOffices() {
     });
 
     if (filtered.length === 0) {
-        grid.innerHTML = `
-            <div class="empty-state">
-                <p class="empty-text">No offices match your search criteria.</p>
-            </div>`;
+        grid.innerHTML = '<div class="empty-state"><p class="empty-text">No offices match.</p></div>';
         return;
     }
 
@@ -254,30 +340,23 @@ function renderOffices() {
         card.className = 'card';
         card.style.cursor = 'default';
 
-        const emailLink = office.Email ? `<a href="mailto:${office.Email}" style="color:var(--accent-color); font-size:13px; text-decoration:none;">✉️ ${office.Email}</a>` : '';
-        const siteLink = office.Website ? `<a href="${office.Website}" target="_blank" style="color:var(--accent-color); font-size:13px; text-decoration:none;">🌐 Website</a>` : '';
+        const emailLink = office.Email ? `<a href="mailto:${office.Email}" class="card-link">✉️ Email</a>` : '';
+        const siteLink = office.Website ? `<a href="${office.Website}" target="_blank" class="card-link">🌐 Website</a>` : '';
 
         card.innerHTML = `
             <div>
-                <div class="card-header">
-                    <span class="card-badge" style="background-color:rgba(59,130,246,0.1); color:var(--accent-color);">${office.Focus || 'Architecture'}</span>
-                </div>
-                <h3 class="card-title" style="margin-bottom:8px;">${office.Name}</h3>
-                <p class="card-description" style="-webkit-line-clamp: 4; font-size:13px; margin-bottom:12px;">${office.Description || 'No description available.'}</p>
-                
-                <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
-                    <div style="font-size:12px; color:var(--text-secondary);">📍 ${office.Address || 'Beirut, Lebanon'}</div>
-                    <div style="display:flex; gap:16px; margin-top:4px;">
-                        ${siteLink}
-                        ${emailLink}
-                    </div>
+                <div class="card-header"><span class="card-badge">${office.Focus || 'Architecture'}</span></div>
+                <h3 class="card-title">${office.Name}</h3>
+                <p class="card-description">${office.Description || 'No description.'}</p>
+                <div class="card-footer">
+                    <span class="card-footer-item">📍 ${office.Address || 'N/A'}</span>
+                    <div class="card-footer-links">${siteLink}${emailLink}</div>
                 </div>
             </div>
-
             <div class="office-card-controls">
-                <div class="outreach-row">
-                    <label for="outreach-${office.Name}">Outreach Status</label>
-                    <select class="outreach-select" id="outreach-${office.Name}" onchange="updateOfficeStatus('${office.Name}', this.value)">
+                <div class="form-group">
+                    <label>Outreach Status</label>
+                    <select class="outreach-select" onchange="updateOfficeStatus('${office.Name}', this.value)">
                         <option value="Uncontacted" ${office.Status === 'Uncontacted' ? 'selected' : ''}>Uncontacted</option>
                         <option value="Portfolio Sent" ${office.Status === 'Portfolio Sent' ? 'selected' : ''}>Portfolio Sent</option>
                         <option value="In Conversation" ${office.Status === 'In Conversation' ? 'selected' : ''}>In Conversation</option>
@@ -285,10 +364,10 @@ function renderOffices() {
                         <option value="No Openings" ${office.Status === 'No Openings' ? 'selected' : ''}>No Openings</option>
                     </select>
                 </div>
-                <div class="form-group" style="margin-bottom:4px;">
-                    <textarea class="notes-textarea" placeholder="Add private application details or tracking notes..." onblur="updateOfficeNotes('${office.Name}', this.value)">${office.Notes || ''}</textarea>
+                <div class="form-group">
+                    <textarea class="notes-textarea" placeholder="Add notes..." onblur="updateOfficeNotes('${office.Name}', this.value)">${office.Notes || ''}</textarea>
                 </div>
-                <button class="btn btn-secondary btn-sm w-full" id="scan-site-${office.Name}" onclick="scanOfficeWebsite('${office.Name}', '${office.Website}')">✨ Scan Website via AI</button>
+                <button class="btn btn-secondary btn-sm w-full" id="scan-site-${office.Name}" onclick="scanOfficeWebsite('${office.Name}', '${office.Website}')">✨ Scan Website</button>
             </div>
         `;
         grid.appendChild(card);
@@ -304,51 +383,29 @@ function renderSettingsPanel() {
     document.getElementById('settings-api-key').value = set.gemini_api_key || '';
     document.getElementById('settings-model').value = set.gemini_model || 'gemini-flash-latest';
     document.getElementById('settings-profile').value = set.profile_summary || '';
+    document.querySelector('input[name="match-logic"][value="AND"]').checked = set.keyword_mode === 'AND';
+    document.querySelector('input[name="match-logic"][value="OR"]').checked = set.keyword_mode !== 'AND';
 
-    // Check correct match logic radio button
-    const isAnd = set.keyword_mode === 'AND';
-    document.querySelector('input[name="match-logic"][value="AND"]').checked = isAnd;
-    document.querySelector('input[name="match-logic"][value="OR"]').checked = !isAnd;
-
-    // Render Platform checkboxes
     const container = document.getElementById('settings-platforms-checkboxes');
     container.innerHTML = '';
     const active = set.platforms || [];
-    
     PLATFORM_OPTIONS.forEach(p => {
-        const label = document.createElement('label');
-        const checked = active.includes(p) ? 'checked' : '';
-        label.innerHTML = `<input type="checkbox" name="platform-chk" value="${p}" ${checked}> ${p}`;
-        container.appendChild(label);
+        container.innerHTML += `<label><input type="checkbox" name="platform-chk" value="${p}" ${active.includes(p) ? 'checked' : ''}> ${p}</label>`;
     });
 }
 
-// Save Settings
+// --- API Actions ---
 async function saveSettings() {
-    const keywords = document.getElementById('settings-keywords').value.split(',').map(x => x.trim()).filter(Boolean);
-    const locations = document.getElementById('settings-locations').value.split(',').map(x => x.trim()).filter(Boolean);
-    const ai_enabled = document.getElementById('settings-ai-enabled').checked;
-    const scheduler_enabled = document.getElementById('settings-scheduler-enabled').checked;
-    const gemini_api_key = document.getElementById('settings-api-key').value.trim();
-    const gemini_model = document.getElementById('settings-model').value;
-    const profile_summary = document.getElementById('settings-profile').value.trim();
-    const keyword_mode = document.querySelector('input[name="match-logic"]:checked').value;
-
-    const platforms = [];
-    document.querySelectorAll('input[name="platform-chk"]:checked').forEach(chk => {
-        platforms.push(chk.value);
-    });
-
     const payload = {
-        keywords,
-        locations,
-        platforms,
-        ai_enabled,
-        scheduler_enabled,
-        gemini_api_key,
-        gemini_model,
-        profile_summary,
-        keyword_mode
+        keywords: document.getElementById('settings-keywords').value.split(',').map(x => x.trim()).filter(Boolean),
+        locations: document.getElementById('settings-locations').value.split(',').map(x => x.trim()).filter(Boolean),
+        ai_enabled: document.getElementById('settings-ai-enabled').checked,
+        scheduler_enabled: document.getElementById('settings-scheduler-enabled').checked,
+        gemini_api_key: document.getElementById('settings-api-key').value.trim(),
+        gemini_model: document.getElementById('settings-model').value,
+        profile_summary: document.getElementById('settings-profile').value.trim(),
+        keyword_mode: document.querySelector('input[name="match-logic"]:checked').value,
+        platforms: Array.from(document.querySelectorAll('input[name="platform-chk"]:checked')).map(chk => chk.value)
     };
 
     try {
@@ -357,30 +414,34 @@ async function saveSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-
         if (response.ok) {
             showToast('Settings saved successfully!');
             state.settings = payload;
-            
-            // Sync saved keywords with the global feed search box
-            if (keywords.length > 0) {
-                const kwStr = keywords.join(', ');
-                el.globalSearchInput.value = kwStr;
-                state.searchQuery = kwStr.toLowerCase();
-            } else {
-                el.globalSearchInput.value = '';
-                state.searchQuery = '';
-            }
         } else {
-            const txt = await response.text();
-            showToast('Failed to save settings: ' + txt);
+            throw new Error(await response.text());
         }
     } catch (e) {
-        showToast('Error saving settings: ' + e.message);
+        showToast('Error saving settings: ' + e.message, 'error');
     }
 }
 
-// Update Outreach Details
+async function updateJobStatus(url, status) {
+    try {
+        const response = await fetch('/api/jobs/update_status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, status })
+        });
+        if (!response.ok) throw new Error('Failed to update status');
+        
+        const job = state.jobs.find(j => j.URL === url);
+        if (job) job.Status = status;
+        showToast(`Status updated to ${status}`);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
 async function updateOfficeStatus(officeName, status) {
     try {
         const response = await fetch('/api/offices/update', {
@@ -388,15 +449,11 @@ async function updateOfficeStatus(officeName, status) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: officeName, status: status })
         });
-        if (!response.ok) {
-            showToast('Failed to update status');
-        } else {
-            // Find and update local state
-            const office = state.offices.find(o => o.Name === officeName);
-            if (office) office.Status = status;
-        }
+        if (!response.ok) throw new Error('Failed to update status');
+        const office = state.offices.find(o => o.Name === officeName);
+        if (office) office.Status = status;
     } catch (e) {
-        showToast('Error updating office: ' + e.message);
+        showToast(e.message, 'error');
     }
 }
 
@@ -407,50 +464,39 @@ async function updateOfficeNotes(officeName, notes) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: officeName, notes: notes })
         });
-        if (!response.ok) {
-            showToast('Failed to update notes');
-        } else {
-            const office = state.offices.find(o => o.Name === officeName);
-            if (office) office.Notes = notes;
-        }
+        if (!response.ok) throw new Error('Failed to update notes');
+        const office = state.offices.find(o => o.Name === officeName);
+        if (office) office.Notes = notes;
     } catch (e) {
-        showToast('Error updating office: ' + e.message);
+        showToast(e.message, 'error');
     }
 }
 
-// Scraper Triggering
 async function startGlobalScan() {
     if (state.scanning) return;
-    
     state.scanning = true;
     el.scanJobBoardsBtn.classList.add('hidden');
     el.stopScanBtn.classList.remove('hidden');
-    
     el.terminalContainer.classList.remove('hidden');
-    el.terminalBody.textContent = 'Starting pipeline execution background thread...\n';
+    el.terminalBody.textContent = 'Starting pipeline...';
 
-    // Check if the search input has a temporary keyword override
     const searchVal = el.globalSearchInput.value.trim();
     const settingsVal = (state.settings.keywords || []).join(', ');
-    
     let url = '/api/scan';
     if (searchVal && searchVal.toLowerCase() !== settingsVal.toLowerCase()) {
         url += '?override_keywords=' + encodeURIComponent(searchVal);
-        el.terminalBody.textContent += `[Pipeline Override] Running scan temporarily for: "${searchVal}"\n`;
     }
 
     try {
         const response = await fetch(url, { method: 'POST' });
         if (response.ok) {
-            // Poll for logs
             state.logInterval = setInterval(pollTerminalLogs, 1000);
         } else {
-            const text = await response.text();
-            el.terminalBody.textContent += `Failed to start scan: ${text}\n`;
+            el.terminalBody.textContent += `\nFailed to start scan: ${await response.text()}`;
             stopGlobalScanUI();
         }
     } catch (e) {
-        el.terminalBody.textContent += `Connection error: ${e.message}\n`;
+        el.terminalBody.textContent += `\nConnection error: ${e.message}`;
         stopGlobalScanUI();
     }
 }
@@ -461,14 +507,11 @@ async function pollTerminalLogs() {
         if (response.ok) {
             const data = await response.json();
             el.terminalBody.textContent = data.logs || 'No output.';
-            
-            // Auto scroll to bottom
             el.terminalBody.scrollTop = el.terminalBody.scrollHeight;
-
             if (data.status === 'idle') {
-                el.terminalBody.textContent += '\nPipeline Execution Complete.\n';
+                el.terminalBody.textContent += '\nPipeline Execution Complete.';
                 stopGlobalScanUI();
-                loadJobs(); // Refresh matched jobs list
+                loadJobs();
             }
         }
     } catch (e) {
@@ -487,14 +530,10 @@ async function stopGlobalScanCall() {
     el.stopScanBtn.disabled = true;
     el.stopScanBtn.textContent = 'Stopping...';
     try {
-        const response = await fetch('/api/scan/stop', { method: 'POST' });
-        if (response.ok) {
-            showToast('Scan stop requested.');
-        } else {
-            showToast('Failed to stop scan.');
-        }
+        await fetch('/api/scan/stop', { method: 'POST' });
+        showToast('Scan stop requested.');
     } catch (e) {
-        showToast('Error stopping scan: ' + e.message);
+        showToast('Error stopping scan: ' + e.message, 'error');
     } finally {
         el.stopScanBtn.disabled = false;
         el.stopScanBtn.textContent = 'Stop Scan';
@@ -502,114 +541,87 @@ async function stopGlobalScanCall() {
 }
 
 async function clearAllResults() {
-    if (!confirm('Are you sure you want to clear all matching jobs from the database?')) return;
-    
+    if (!confirm('Are you sure you want to clear all jobs?')) return;
     try {
-        const response = await fetch('/api/jobs', { method: 'DELETE' });
-        if (response.ok) {
-            showToast('All matching jobs cleared.');
-            loadJobs();
-        }
+        await fetch('/api/jobs', { method: 'DELETE' });
+        showToast('All jobs cleared.');
+        loadJobs();
     } catch (e) {
-        showToast('Failed to clear results: ' + e.message);
+        showToast('Failed to clear results: ' + e.message, 'error');
     }
 }
 
-// Office Website AI Scraper
 async function scanOfficeWebsite(name, website) {
     const btn = document.getElementById(`scan-site-${name}`);
-    const originalText = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Scanning Website...';
-
-    showToast(`AI is scanning ${name} careers section...`);
+    btn.textContent = 'Scanning...';
+    showToast(`AI is scanning ${name}...`);
     try {
         const response = await fetch('/api/scan/office', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, website })
         });
-        
-        if (response.ok) {
-            const res = await response.json();
-            if (res.success) {
-                showToast(`Website scan complete! Found ${res.roles ? res.roles.length : 0} matching roles.`);
-                loadJobs();
-            } else {
-                showToast(`Scan Failed: ${res.error || 'Unknown error'}`);
-            }
+        const res = await response.json();
+        if (res.success) {
+            showToast(`Scan complete! Found ${res.roles ? res.roles.length : 0} roles.`);
+            loadJobs();
         } else {
-            showToast('Server returned an error running website scan');
+            throw new Error(res.error || 'Unknown scan error');
         }
     } catch (e) {
-        showToast('Failed to connect to scan endpoint: ' + e.message);
+        showToast(`Scan Failed: ${e.message}`, 'error');
     } finally {
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.textContent = '✨ Scan Website';
     }
 }
 
-// Gemini AI Keyword Expansion
 async function autoExpandKeywords() {
     const btn = document.getElementById('btn-auto-expand');
     btn.disabled = true;
     btn.textContent = 'Expanding...';
-
     try {
         const response = await fetch('/api/keywords/expand', { method: 'POST' });
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                document.getElementById('settings-keywords').value = data.keywords.join(', ');
-                showToast('Keywords expanded! Make sure to click Save configurations.');
-            } else {
-                showToast('Expansion Failed: ' + data.error);
-            }
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('settings-keywords').value = data.keywords.join(', ');
+            showToast('Keywords expanded! Click Save to store them.');
         } else {
-            showToast('Server failed to expand keywords');
+            throw new Error(data.error);
         }
     } catch (e) {
-        showToast('Error during expansion: ' + e.message);
-    } finally {
+        showToast('Expansion Failed: ' + e.message, 'error');
+    }
+} finally {
         btn.disabled = false;
         btn.textContent = 'Auto-Expand';
     }
 }
 
-// Drawer Controller
+// --- Drawer & Utils ---
 function openDrawer(job) {
     document.getElementById('detail-drawer-title').textContent = job.Title;
     document.getElementById('detail-drawer-company').textContent = job.Platform.includes("OEA - ") ? job.Platform.replace("OEA - ", "") : "Target Job";
-    document.getElementById('detail-drawer-location').textContent = job.Location || 'Lebanon';
-    document.getElementById('detail-drawer-deadline').textContent = job.Deadline || 'See listing';
+    document.getElementById('detail-drawer-location').textContent = job.Location || 'N/A';
+    document.getElementById('detail-drawer-deadline').textContent = job.Deadline || 'N/A';
     document.getElementById('detail-drawer-platform').textContent = job.Platform;
-    
-    // Render HTML description safely
-    const descBox = document.getElementById('detail-drawer-description');
-    descBox.innerHTML = cleanJobDescriptionHtml(job.Description);
+    document.getElementById('detail-drawer-description').innerHTML = cleanJobDescriptionHtml(job.Description);
 
-    // Render AI Score box if available
     const aiBox = document.getElementById('detail-drawer-ai-box');
-    const score = job["Match Score"];
-    if (score !== undefined && state.settings.ai_enabled !== false) {
+    if (job["Match Score"] !== undefined && state.settings.ai_enabled !== false) {
         aiBox.classList.remove('hidden');
-        document.getElementById('detail-drawer-ai-score').textContent = score;
+        document.getElementById('detail-drawer-ai-score').textContent = job["Match Score"];
         document.getElementById('detail-drawer-ai-reason').innerHTML = `<strong>Match Reason:</strong> ${job["Match Reason"] || 'N/A'}`;
         document.getElementById('detail-drawer-ai-reqs').innerHTML = `<strong>Requirements:</strong> ${job["Key Requirements"] || 'N/A'}`;
     } else {
         aiBox.classList.add('hidden');
     }
 
-    // Set apply URL link
     const applyBtn = document.getElementById('detail-drawer-apply-btn');
     applyBtn.href = job.URL || '#';
-    if (job.URL) {
-        applyBtn.classList.remove('hidden');
-    } else {
-        applyBtn.classList.add('hidden');
-    }
+    applyBtn.classList.toggle('hidden', !job.URL);
 
-    // Slide in
     el.detailDrawerOverlay.classList.add('active');
     el.detailDrawer.classList.add('active');
 }
@@ -619,7 +631,6 @@ function closeDrawer() {
     el.detailDrawer.classList.remove('active');
 }
 
-// Util helpers
 function stripHtml(html) {
     if (!html) return '';
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -628,16 +639,15 @@ function stripHtml(html) {
 
 function cleanJobDescriptionHtml(desc) {
     if (!desc) return 'No details available.';
-    // Convert newlines to paragraphs if not html
-    if (!desc.includes('<p>') && !desc.includes('<div') && !desc.includes('<br')) {
-        return desc.split('\n\n').map(p => `<p style="margin-bottom:12px;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+    if (!desc.includes('<p>') && !desc.includes('<br')) {
+        return desc.split('\n').map(p => `<p>${p}</p>`).join('');
     }
     return desc;
 }
 
-function showToast(message) {
+function showToast(message, type = 'success') {
     el.toast.textContent = message;
-    el.toast.classList.add('show');
+    el.toast.className = `toast show ${type}`;
     setTimeout(() => {
         el.toast.classList.remove('show');
     }, 3000);
@@ -646,45 +656,29 @@ function showToast(message) {
 async function uploadResumeFile(e) {
     const file = e.target.files[0];
     if (!file) return;
-    
-    // Check if Gemini API key is configured first
-    const geminiKey = document.getElementById('settings-api-key').value.trim();
-    if (!geminiKey) {
-        showToast('Please enter and save a Gemini API Key first.');
-        e.target.value = ''; // Reset uploader
+    if (!document.getElementById('settings-api-key').value.trim()) {
+        showToast('Please enter and save a Gemini API Key first.', 'error');
+        e.target.value = '';
         return;
     }
 
-    showToast('Uploading and parsing resume PDF via Gemini AI...');
+    showToast('Uploading and parsing resume...');
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-        const response = await fetch('/api/resume/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                // Populate profile textarea
-                document.getElementById('settings-profile').value = data.profile_summary;
-                
-                // Populate keywords field
-                document.getElementById('settings-keywords').value = data.keywords.join(', ');
-                
-                showToast('Resume parsed! Click Save Configurations to store.');
-            } else {
-                showToast('AI Parsing Failed: ' + (data.error || 'Unknown error'));
-            }
+        const response = await fetch('/api/resume/upload', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            document.getElementById('settings-profile').value = data.profile_summary;
+            document.getElementById('settings-keywords').value = data.keywords.join(', ');
+            showToast('Resume parsed! Click Save to store changes.');
         } else {
-            const txt = await response.text();
-            showToast('Upload Failed: ' + txt);
+            throw new Error(data.detail || data.error || 'Unknown parsing error');
         }
     } catch (err) {
-        showToast('Upload Error: ' + err.message);
+        showToast(`Upload Failed: ${err.message}`, 'error');
     } finally {
-        e.target.value = ''; // Reset uploader
+        e.target.value = '';
     }
 }
