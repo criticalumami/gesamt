@@ -167,8 +167,7 @@ function renderJobs() {
     const grid = el.globalListingsGrid;
     grid.innerHTML = '';
 
-    const terms = state.searchQuery.split(/[
-,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+    const terms = state.searchQuery.split(/[ ,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
     const filtered = state.jobs.filter(job => {
         const text = `${job.Title} ${job.Platform} ${job.Location} ${job.Description}`.toLowerCase();
         if (terms.length === 0) return true;
