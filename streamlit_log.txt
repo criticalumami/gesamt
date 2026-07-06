@@ -37,3 +37,7 @@ Total matching jobs found: 0 (Deduplicated from 0)
 Empty DataFrame
 Columns: [Platform, Title, Location, Description, Deadline, URL, Match Score, Match Reason, Key Requirements, Status]
 Index: []
+[Scheduler] Started background daily scan scheduler thread.
+[Scheduler] Triggering automatic daily scan at 2026-07-02 16:43:58.959766
+  Stopping...
+[System] Launcher: Using virtual environment Python: /Users/mzrxa/.gemini/antigravity/projects/job_scraper/venv/bin/python
