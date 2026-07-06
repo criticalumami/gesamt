@@ -11,7 +11,7 @@ let state = {
     customSearchQuery: '',
     selectedAddress: '',
     scanning: false,
-    logInterval: null
+    logWebSocket: null // Add WebSocket variable
 };
 
 // Constants
@@ -479,6 +479,8 @@ async function startGlobalScan() {
     el.terminalContainer.classList.remove('hidden');
     el.terminalBody.textContent = 'Starting pipeline...';
 
+    connectLogWebSocket(); // Connect to WebSocket
+
     const searchVal = el.globalSearchInput.value.trim();
     const settingsVal = (state.settings.keywords || []).join(', ');
     let url = '/api/scan';
@@ -488,9 +490,7 @@ async function startGlobalScan() {
 
     try {
         const response = await fetch(url, { method: 'POST' });
-        if (response.ok) {
-            state.logInterval = setInterval(pollTerminalLogs, 1000);
-        } else {
+        if (!response.ok) {
             el.terminalBody.textContent += `\nFailed to start scan: ${await response.text()}`;
             stopGlobalScanUI();
         }
@@ -500,29 +500,56 @@ async function startGlobalScan() {
     }
 }
 
-async function pollTerminalLogs() {
-    try {
-        const response = await fetch('/api/logs');
-        if (response.ok) {
-            const data = await response.json();
-            el.terminalBody.textContent = data.logs || 'No output.';
-            el.terminalBody.scrollTop = el.terminalBody.scrollHeight;
-            if (data.status === 'idle') {
-                el.terminalBody.textContent += '\nPipeline Execution Complete.';
-                stopGlobalScanUI();
-                loadJobs();
-            }
-        }
-    } catch (e) {
-        console.error('Log polling failed', e);
-    }
-}
-
 function stopGlobalScanUI() {
     state.scanning = false;
-    clearInterval(state.logInterval);
+    disconnectLogWebSocket(); // Disconnect WebSocket
     el.scanJobBoardsBtn.classList.remove('hidden');
     el.stopScanBtn.classList.add('hidden');
+}
+
+function connectLogWebSocket() {
+    if (state.logWebSocket && state.logWebSocket.readyState === WebSocket.OPEN) {
+        return;
+    }
+    
+    const ws_protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const ws_url = ws_protocol + window.location.host + "/ws/logs";
+    state.logWebSocket = new WebSocket(ws_url);
+
+    state.logWebSocket.onopen = (event) => {
+        console.log("WebSocket connected:", event);
+        el.terminalBody.textContent = ''; // Clear terminal on new connection
+    };
+
+    state.logWebSocket.onmessage = (event) => {
+        el.terminalBody.textContent += event.data + '\n';
+        el.terminalBody.scrollTop = el.terminalBody.scrollHeight;
+        if (event.data.includes("Pipeline Execution Complete.")) {
+            stopGlobalScanUI();
+            loadJobs();
+        }
+    };
+
+    state.logWebSocket.onclose = (event) => {
+        console.log("WebSocket disconnected:", event);
+        if (state.scanning) { // If scan was active, it means it finished or was interrupted
+            el.terminalBody.textContent += '\nPipeline Execution Complete.';
+            stopGlobalScanUI();
+            loadJobs();
+        }
+    };
+
+    state.logWebSocket.onerror = (event) => {
+        console.error("WebSocket error:", event);
+        showToast('WebSocket connection error. Check console for details.', 'error');
+    };
+}
+
+function disconnectLogWebSocket() {
+    if (state.logWebSocket) {
+        state.logWebSocket.close();
+        state.logWebSocket = null;
+    }
 }
 
 async function stopGlobalScanCall() {

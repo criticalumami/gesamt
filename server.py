@@ -3,9 +3,10 @@ import sys
 import json
 import csv
 import subprocess
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+import asyncio
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -29,6 +30,42 @@ if not os.path.exists(static_dir):
 # Global background process tracking
 active_process = None
 LOG_FILE = "pipeline.log"
+log_streamer_task = None
+
+active_websockets: List[WebSocket] = []
+
+async def notify_websockets(message: str):
+    for websocket in active_websockets:
+        await websocket.send_text(message)
+
+async def log_streamer():
+    """Continuously reads the log file and sends new lines to connected WebSockets."""
+    last_position = 0
+    while True:
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                f.seek(last_position)
+                new_content = f.read()
+                if new_content:
+                    for line in new_content.splitlines():
+                        if line: # Only send non-empty lines
+                            await notify_websockets(line)
+                    last_position = f.tell()
+        await asyncio.sleep(0.5) # Check for new logs every 0.5 seconds
+
+@app.on_event("startup")
+async def startup_event():
+    global log_streamer_task
+    log_streamer_task = asyncio.create_task(log_streamer())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if log_streamer_task:
+        log_streamer_task.cancel()
+        try:
+            await log_streamer_task
+        except asyncio.CancelledError:
+            pass
 
 # Pydantic models
 class SettingsPayload(BaseModel):
@@ -298,7 +335,9 @@ async def stop_scan():
             # Append stop message to log
             if os.path.exists(LOG_FILE):
                 with open(LOG_FILE, "a", encoding="utf-8") as f:
-                    f.write("\n[Pipeline] Scan stopped by user.\n")
+                    stop_message = "\n[Pipeline] Scan stopped by user.\n"
+                    f.write(stop_message)
+                await notify_websockets(stop_message.strip())
             return {"success": True}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to stop pipeline: {e}")
@@ -321,6 +360,27 @@ async def get_logs():
             logs_content = f"Error reading log file: {e}"
             
     return {"status": status, "logs": logs_content}
+
+@app.websocket("/ws/logs")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_websockets.append(websocket)
+    
+    # Send existing log content
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                await websocket.send_text(line.strip())
+                
+    try:
+        while True:
+            # Keep the connection alive, client will send messages if needed
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        active_websockets.remove(websocket)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        active_websockets.remove(websocket)
 
 @app.post("/api/scan/office")
 async def scan_office(payload: OfficeScanPayload):
