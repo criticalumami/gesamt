@@ -7,19 +7,22 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
+# Create a non-root user with UID 1000
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1
 
-# Enable unbuffered logging
-ENV PYTHONUNBUFFERED=1
-
+# Set working directory inside user's home
+WORKDIR $HOME/app
 
 # Copy requirements and install
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Copy all project files
-COPY . .
+COPY --chown=user . .
 
 # Expose Hugging Face's default port
 EXPOSE 7860
