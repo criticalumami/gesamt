@@ -43,15 +43,24 @@ async def log_streamer():
     last_position = 0
     while True:
         if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                f.seek(last_position)
-                new_content = f.read()
-                if new_content:
-                    for line in new_content.splitlines():
-                        if line: # Only send non-empty lines
-                            await notify_websockets(line)
-                    last_position = f.tell()
+            try:
+                file_size = os.path.getsize(LOG_FILE)
+                if file_size < last_position:
+                    last_position = 0
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    f.seek(last_position)
+                    new_content = f.read()
+                    if new_content:
+                        for line in new_content.splitlines():
+                            if line: # Only send non-empty lines
+                                await notify_websockets(line)
+                        last_position = f.tell()
+            except Exception as e:
+                print(f"Error in log_streamer: {e}")
+        else:
+            last_position = 0
         await asyncio.sleep(0.5) # Check for new logs every 0.5 seconds
+
 
 @app.on_event("startup")
 async def startup_event():
