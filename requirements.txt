@@ -9,4 +9,5 @@ filelock>=3.13.0
 python-dateutil>=2.9.0
 fastapi
 uvicorn
+python-multipart
 
