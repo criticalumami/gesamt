@@ -10,4 +10,6 @@ python-dateutil>=2.9.0
 fastapi
 uvicorn
 python-multipart
+websockets
+
 
