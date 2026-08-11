@@ -92,10 +92,21 @@ def load_existing_urls():
 def clean_description(desc_text):
     if not desc_text:
         return "No description available."
-    cleaned = " ".join(desc_text.split())
+    if "<" in desc_text and ">" in desc_text:
+        try:
+            soup = BeautifulSoup(desc_text, "html.parser")
+            for script_or_style in soup(["script", "style", "noscript"]):
+                script_or_style.decompose()
+            text = soup.get_text(separator=" ")
+        except Exception:
+            text = desc_text
+    else:
+        text = desc_text
+    cleaned = " ".join(text.split())
     if len(cleaned) > 200:
         return cleaned[:200] + "..."
     return cleaned
+
 
 # --- HTTP Retry Helper ---
 def http_get_with_retry(url, *, session=None, retries=3, backoff=1, **kwargs):
