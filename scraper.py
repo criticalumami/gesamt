@@ -145,12 +145,29 @@ def http_get_with_retry(url, *, session=None, retries=3, backoff=1, **kwargs):
 
 
 
+LEBANON_SYNONYMS = {
+    "lebanon", "liban", "beirut", "beyrouth", "mount lebanon", "metn", "keserwan", 
+    "jounieh", "tripoli", "saida", "sidon", "tyre", "sour", "nabatieh", "bekaa", 
+    "zahle", "chouf", "aley", "hazmieh", "sin el fil", "achrafieh", "antelias", 
+    "dbayeh", "byblos", "jbeil", "badaro", "hamra", "verdun"
+}
+
+FRANCE_SYNONYMS = {
+    "france", "paris", "île-de-france", "ile-de-france", "lyon", "marseille", 
+    "bordeaux", "toulouse", "nantes", "strasbourg", "lille", "montpellier", 
+    "rennes", "nice", "grenoble", "rouen", "toulon", "clermont", "angers", "dijon"
+}
+
+REMOTE_SYNONYMS = {
+    "remote", "télétravail", "teletravail", "telecommuting", "hybrid", "work from home"
+}
+
 # --- Helper Functions ---
-def matches_profile(title, description, location=""):
+def matches_profile(title, description, location="", platform=""):
     """
     Returns True if the job matches the profile logic:
-    If keywords are set, it must match at least one keyword.
-    If locations are set, it must match at least one location.
+    If keywords are set, it must match at least one keyword (or all if AND mode).
+    If locations are set, it checks against expanded locations or local platforms.
     """
     text = f"{title} {description} {location}".lower()
 
@@ -162,8 +179,28 @@ def matches_profile(title, description, location=""):
     else:  # OR (default)
         has_keyword = any(kw.lower() in text for kw in KEYWORDS)
 
-    # Check locations (if none specified, treat as match)
-    has_location = not LOCATIONS or any(loc.lower() in text for loc in LOCATIONS)
+    # Check locations
+    if not LOCATIONS:
+        has_location = True
+    elif platform in ("Daleel Madani", "OEA", "Jobs for Lebanon"):
+        # Inherently Lebanon-focused platforms
+        has_location = any(l.lower() in ("lebanon", "beirut") for l in LOCATIONS)
+    else:
+        has_location = False
+        for loc in LOCATIONS:
+            loc_l = loc.lower()
+            if loc_l in text:
+                has_location = True
+                break
+            if loc_l in ("lebanon", "beirut") and any(syn in text for syn in LEBANON_SYNONYMS):
+                has_location = True
+                break
+            if loc_l in ("france", "paris") and any(syn in text for syn in FRANCE_SYNONYMS):
+                has_location = True
+                break
+            if loc_l == "remote" and any(syn in text for syn in REMOTE_SYNONYMS):
+                has_location = True
+                break
 
     return has_keyword and has_location
 
@@ -529,7 +566,7 @@ def scrape_daleel_madani(existing_urls=None):
     
     for kw in KEYWORDS:
         print(f"\n[Daleel Madani] Searching keyword: '{kw}'...")
-        for page_num in range(2):
+        for page_num in range(4):
             url = f"https://daleel-madani.org/jobs?search_api_views_fulltext={kw}&page={page_num}"
             print(f"  Fetching page {page_num + 1}: {url}")
             
@@ -604,7 +641,7 @@ def scrape_daleel_madani(existing_urls=None):
                             detail_url = res["url"]
                             deadline = res["deadline"]
                             
-                            if matches_profile(title, description, listing_location):
+                            if matches_profile(title, description, listing_location, platform="Daleel Madani"):
                                 print(f"      => MATCH FOUND: '{title}' (Location: {listing_location})")
                                 score, reason, reqs = get_ai_evaluation(title, description, listing_location, job_url=detail_url)
                                 match = {
@@ -777,6 +814,81 @@ def scrape_euraxess(existing_urls=None):
                 
     return matched_jobs
 
+def scrape_unjobs_portal(existing_urls=None):
+    """
+    Public UN jobs scraper querying UNJobs.org for target duty stations (Lebanon, France)
+    and thematic areas (urban planning, shelter, infrastructure).
+    """
+    print("\n--- [UN Careers / UNJobs] Scraping public UNJobs portal ---")
+    if existing_urls is None:
+        existing_urls = set()
+
+    duty_stations = []
+    for loc in LOCATIONS:
+        l = loc.lower()
+        if l in ("lebanon", "beirut") and "lebanon" not in duty_stations:
+            duty_stations.append("lebanon")
+        elif l in ("france", "paris") and "france" not in duty_stations:
+            duty_stations.append("france")
+
+    if not duty_stations:
+        duty_stations = ["lebanon", "france"]
+
+    matched_jobs = []
+    urls_to_crawl = [f"https://unjobs.org/duty_stations/{d}" for d in duty_stations]
+    urls_to_crawl.append("https://unjobs.org/themes/urban")
+
+    for u in urls_to_crawl:
+        try:
+            print(f"  [UNJobs] Querying: {u}...")
+            r = curl_requests.get(u, impersonate="chrome", timeout=15)
+            if r.status_code != 200:
+                print(f"    UNJobs returned status {r.status_code} for {u}")
+                continue
+
+            soup = BeautifulSoup(r.text, "html.parser")
+            job_cards = soup.select(".job")
+            print(f"    Found {len(job_cards)} listings on {u}.")
+
+            for card in job_cards[:30]:
+                link_el = card.select_one("a")
+                if not link_el:
+                    continue
+                title = link_el.text.strip()
+                href = link_el.get("href", "")
+                if not title or not href:
+                    continue
+
+                detail_url = href if href.startswith("http") else f"https://unjobs.org{href}"
+                if detail_url in existing_urls:
+                    continue
+
+                full_text = card.text.strip()
+                loc = "Lebanon" if "lebanon" in u else ("France" if "france" in u else "International")
+
+                if matches_profile(title, full_text, loc, platform="UN Careers"):
+                    print(f"    => MATCH FOUND: '{title}' ({loc})")
+                    score, reason, reqs = get_ai_evaluation(title, full_text, loc, job_url=detail_url)
+                    match = {
+                        "Platform": "UN Careers (UNJobs)",
+                        "Title": title,
+                        "Location": loc,
+                        "Description": clean_description(full_text),
+                        "Deadline": "See listing",
+                        "URL": detail_url,
+                        "Match Score": score,
+                        "Match Reason": reason,
+                        "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
+                        "Status": "New"
+                    }
+                    db.save_job(match)
+                    matched_jobs.append(match)
+            time.sleep(1)
+        except Exception as e:
+            print(f"  [UNJobs] Error querying {u}: {e}")
+
+    return matched_jobs
+
 # --- UN Careers Scraper (Dynamic) ---
 def perform_un_login(page, username, password):
     """
@@ -826,12 +938,16 @@ def perform_un_login(page, username, password):
 
 def scrape_un_careers(existing_urls=None):
     """
-    Scrapes job listings from UN Inspira portal
+    Scrapes job listings from UN Inspira portal (with UNJobs public fallback)
     """
-    print(f"\n--- [UN Careers] Launching Playwright to scrape UN Careers (Inspira) (Headless={HEADLESS}) ---")
     username = UN_USERNAME
     password = UN_PASSWORD
     
+    if not username or not password or "your_un" in username:
+        print("\n--- [UN Careers] No Inspira credentials configured. Utilizing public UNJobs portal ---")
+        return scrape_unjobs_portal(existing_urls)
+
+    print(f"\n--- [UN Careers] Launching Playwright to scrape UN Careers (Inspira) (Headless={HEADLESS}) ---")
     matched_jobs = []
     state_file = "storage_state.json"
     if existing_urls is None:
@@ -1299,104 +1415,108 @@ def scrape_linkedin(existing_urls=None):
     for loc in search_locations:
         loc_label = loc if loc else "(global)"
         print(f"  Searching LinkedIn for '{combined_kws}' in '{loc_label}'...")
-        params = {
-            "keywords": combined_kws,
-            "start": 0
-        }
-        if loc:
-            params["location"] = loc
         
-        url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-        try:
-            r = http_get_with_retry(url, params=params, headers=headers, timeout=20)
-            if r.status_code != 200:
-                print(f"    Failed to query LinkedIn for {loc}: status {r.status_code}")
-                continue
-                
-            soup = BeautifulSoup(r.text, "html.parser")
-            listings = soup.select("li")
-            print(f"    Found {len(listings)} listings in '{loc}'.")
+        for start_offset in (0, 25):
+            params = {
+                "keywords": combined_kws,
+                "start": start_offset
+            }
+            if loc:
+                params["location"] = loc
             
-            for idx, item in enumerate(listings[:10]):  # check top 10 listings per location
-                try:
-                    title_el = item.select_one(".base-search-card__title")
-                    company_el = item.select_one(".base-search-card__subtitle a")
-                    loc_el = item.select_one(".job-search-card__location")
-                    link_el = item.select_one(".base-card__full-link")
-
-                    if not title_el or not link_el:
-                        continue
-
-                    # Extract post date for LinkedIn (since there is no application deadline)
-                    date_el = item.select_one("time, .job-search-card__listdate, .job-search-card__listdate--new")
-                    post_date = date_el.text.strip() if date_el else ""
-                    deadline_str = f"Posted: {post_date}" if post_date else "See listing"
-
-                    title = title_el.text.strip()
-                    company = company_el.text.strip() if company_el else "N/A"
-                    location = loc_el.text.strip() if loc_el else loc
-                    detail_url = link_el.get("href")
-
-                    if "?" in detail_url:
-                        detail_url = detail_url.split("?")[0]
-
-                    if detail_url in existing_urls:
-                        print(f"    [Skip] Already tracked: '{title}'")
-                        continue
-                        
-                    cached_job = db.get_cached_job(detail_url)
-                    if cached_job:
-                        full_title = f"{title} at {company}" if company != "N/A" else title
-                        print(f"    [Cache] Restored cached match details for: '{full_title}'")
-                        cached_job["Status"] = "New"
-                        db.save_job(cached_job)
-                        matched_jobs.append(cached_job)
-                        continue
-
-                    full_title = f"{title} at {company}" if company != "N/A" else title
-
-                    # Fetch real description from the detail page
-                    description = f"Active position at {company} in {location}. Open link for full requirements."
+            url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+            try:
+                r = http_get_with_retry(url, params=params, headers=headers, timeout=20)
+                if r.status_code != 200:
+                    print(f"    Failed to query LinkedIn for {loc} (offset {start_offset}): status {r.status_code}")
+                    continue
+                    
+                soup = BeautifulSoup(r.text, "html.parser")
+                listings = soup.select("li")
+                print(f"    Found {len(listings)} listings in '{loc}' (offset {start_offset}).")
+                if not listings:
+                    break
+                
+                for idx, item in enumerate(listings[:20]):
                     try:
-                        dr = http_get_with_retry(detail_url, headers=headers, timeout=15)
-                        if dr.status_code == 200:
-                            detail_soup = BeautifulSoup(dr.text, "html.parser")
-                            desc_elem = (
-                                detail_soup.select_one(".description__text") or
-                                detail_soup.select_one(".show-more-less-html__markup") or
-                                detail_soup.select_one("section.description")
-                            )
-                            if desc_elem:
-                                description = desc_elem.get_text(separator=" ", strip=True)
-                    except Exception as fe:
-                        print(f"    Warning: could not fetch LinkedIn detail for '{full_title}': {fe}")
+                        title_el = item.select_one(".base-search-card__title")
+                        company_el = item.select_one(".base-search-card__subtitle a")
+                        loc_el = item.select_one(".job-search-card__location")
+                        link_el = item.select_one(".base-card__full-link")
 
-                    if not matches_profile(full_title, description, location):
-                        print(f"    Skipping '{full_title}' — no profile match.")
-                        continue
+                        if not title_el or not link_el:
+                            continue
 
-                    print(f"    => MATCH FOUND: '{full_title}'")
+                        # Extract post date for LinkedIn (since there is no application deadline)
+                        date_el = item.select_one("time, .job-search-card__listdate, .job-search-card__listdate--new")
+                        post_date = date_el.text.strip() if date_el else ""
+                        deadline_str = f"Posted: {post_date}" if post_date else "See listing"
 
-                    score, reason, reqs = get_ai_evaluation(full_title, description, location, job_url=detail_url)
-                    match = {
-                        "Platform": "LinkedIn",
-                        "Title": full_title,
-                        "Location": location,
-                        "Description": clean_description(description),
-                        "Deadline": deadline_str,
-                        "URL": detail_url,
-                        "Match Score": score,
-                        "Match Reason": reason,
-                        "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
-                    }
-                    matched_jobs.append(match)
-                    db.save_job(match)
+                        title = title_el.text.strip()
+                        company = company_el.text.strip() if company_el else "N/A"
+                        location = loc_el.text.strip() if loc_el else loc
+                        detail_url = link_el.get("href")
 
-                except Exception as ie:
-                    print(f"    Error parsing row: {ie}")
+                        if "?" in detail_url:
+                            detail_url = detail_url.split("?")[0]
+
+                        if detail_url in existing_urls:
+                            print(f"    [Skip] Already tracked: '{title}'")
+                            continue
+                            
+                        cached_job = db.get_cached_job(detail_url)
+                        if cached_job:
+                            full_title = f"{title} at {company}" if company != "N/A" else title
+                            print(f"    [Cache] Restored cached match details for: '{full_title}'")
+                            cached_job["Status"] = "New"
+                            db.save_job(cached_job)
+                            matched_jobs.append(cached_job)
+                            continue
+
+                        full_title = f"{title} at {company}" if company != "N/A" else title
+
+                        # Fetch real description from the detail page
+                        description = f"Active position at {company} in {location}. Open link for full requirements."
+                        try:
+                            dr = http_get_with_retry(detail_url, headers=headers, timeout=15)
+                            if dr.status_code == 200:
+                                detail_soup = BeautifulSoup(dr.text, "html.parser")
+                                desc_elem = (
+                                    detail_soup.select_one(".description__text") or
+                                    detail_soup.select_one(".show-more-less-html__markup") or
+                                    detail_soup.select_one("section.description")
+                                )
+                                if desc_elem:
+                                    description = desc_elem.get_text(separator=" ", strip=True)
+                        except Exception as fe:
+                            print(f"    Warning: could not fetch LinkedIn detail for '{full_title}': {fe}")
+
+                        if not matches_profile(full_title, description, location, platform="LinkedIn"):
+                            print(f"    Skipping '{full_title}' — no profile match.")
+                            continue
+
+                        print(f"    => MATCH FOUND: '{full_title}'")
+
+                        score, reason, reqs = get_ai_evaluation(full_title, description, location, job_url=detail_url)
+                        match = {
+                            "Platform": "LinkedIn",
+                            "Title": full_title,
+                            "Location": location,
+                            "Description": clean_description(description),
+                            "Deadline": deadline_str,
+                            "URL": detail_url,
+                            "Match Score": score,
+                            "Match Reason": reason,
+                            "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs
+                        }
+                        matched_jobs.append(match)
+                        db.save_job(match)
+
+                    except Exception as ie:
+                        print(f"    Error parsing row: {ie}")
+            except Exception as e:
+                print(f"    Error querying LinkedIn for {loc} (offset {start_offset}): {e}")
             time.sleep(1)  # polite delay between location queries
-        except Exception as e:
-            print(f"    Error querying LinkedIn for {loc}: {e}")
             
     return matched_jobs
 
@@ -1871,138 +1991,140 @@ def scrape_oea(existing_urls=None):
         "Connection": "keep-alive"
     }
 
-    # Fetch main career page
-    try:
-        r = requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
-        if r.status_code != 200:
-            print(f"[OEA Beirut] Error: Failed to fetch career portal (status {r.status_code})")
-            return []
-    except Exception as e:
-        print(f"[OEA Beirut] Error connecting to career portal: {e}")
-        return []
-
-    soup = BeautifulSoup(r.text, "html.parser")
-    careers = soup.find_all(class_="type-career")
-    print(f"[OEA Beirut] Found {len(careers)} total job listings on homepage.")
-    
     matches_found = []
-    
-    for idx, card in enumerate(careers):
+    seen_oea_urls = set()
+
+    for page_num in range(1, 4):
+        page_url = f"https://www.oea.org.lb/career/page/{page_num}/" if page_num > 1 else url
+        print(f"[OEA Beirut] Fetching page {page_num}: {page_url}...")
         try:
-            # 1. Parse title and detail URL
-            title_h2 = card.find("h2", class_="job-title")
-            if not title_h2:
-                continue
-            title_a = title_h2.find("a")
-            if not title_a:
-                continue
-                
-            title = title_a.get_text(strip=True)
-            detail_url = title_a.get("href")
-            
-            # Normalise detail URL
-            if detail_url and not detail_url.startswith("http"):
-                detail_url = urllib.parse.urljoin(url, detail_url)
-                
-            if not detail_url or detail_url in existing_urls:
-                # Already processed or empty
-                continue
-                
-            # 2. Parse company
-            company = ""
-            company_el = card.find("h4", class_="company-title")
-            if company_el:
-                # remove the <span class="addon"> element containing "عبر"
-                company_el_copy = BeautifulSoup(str(company_el), "html.parser")
-                addon = company_el_copy.find("span", class_="addon")
-                if addon:
-                    addon.decompose()
-                company = company_el_copy.get_text(strip=True)
-            else:
-                company = "OEA Beirut"
+            r = requests.get(page_url, headers=headers, impersonate="chrome120", timeout=20)
+            if r.status_code != 200:
+                print(f"  [OEA Beirut] Page {page_num} returned status {r.status_code}")
+                break
+        except Exception as e:
+            print(f"  [OEA Beirut] Error connecting to page {page_num}: {e}")
+            break
 
-            # 3. Parse initial deadline if present
-            deadline = "See listing"
-            deadline_el = card.find(class_="deadline-time")
-            if deadline_el:
-                deadline = deadline_el.get_text(strip=True)
-                
-            # 4. Check if listing title matches keywords before executing full detail fetch
-            # We also check if it's architectural/planning category based on card classes
-            card_classes = card.get("class", [])
-            is_architectural = any("architect" in str(cls).lower() for cls in card_classes)
-            
-            if not (matches_profile(title, "", "Lebanon") or is_architectural):
-                # If the title is completely irrelevant, skip
-                continue
-                
-            print(f"[OEA Beirut] Processing relevant job: '{title}' by '{company}'")
-            
-            # Fetch detail page
+        soup = BeautifulSoup(r.text, "html.parser")
+        careers = soup.find_all(class_="type-career")
+        print(f"  [OEA Beirut] Found {len(careers)} listings on page {page_num}.")
+        if not careers:
+            break
+
+        for idx, card in enumerate(careers):
             try:
-                import time
-                time.sleep(1.5) # Polite delay
-                dr = requests.get(detail_url, headers=headers, impersonate="chrome120", timeout=20)
-                if dr.status_code == 200:
-                    dsoup = BeautifulSoup(dr.text, "html.parser")
+                # 1. Parse title and detail URL
+                title_h2 = card.find("h2", class_="job-title")
+                if not title_h2:
+                    continue
+                title_a = title_h2.find("a")
+                if not title_a:
+                    continue
                     
-                    # Extract email address
-                    email = ""
-                    # Check for data-cfemail
-                    cf_el = dsoup.find(attrs={"data-cfemail": True})
-                    if cf_el:
-                        email = decode_cf_email(cf_el["data-cfemail"])
-                    else:
-                        # Fallback regex search for standard emails in body text
-                        body_txt = dsoup.body.get_text() if dsoup.body else ""
-                        email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", body_txt)
-                        if email_match:
-                            email = email_match.group(0)
+                title = title_a.get_text(strip=True)
+                detail_url = title_a.get("href")
+                
+                # Normalise detail URL
+                if detail_url and not detail_url.startswith("http"):
+                    detail_url = urllib.parse.urljoin(url, detail_url)
+                    
+                if not detail_url or detail_url in existing_urls or detail_url in seen_oea_urls:
+                    continue
+                seen_oea_urls.add(detail_url)
+                    
+                # 2. Parse company
+                company = ""
+                company_el = card.find("h4", class_="company-title")
+                if company_el:
+                    company_el_copy = BeautifulSoup(str(company_el), "html.parser")
+                    addon = company_el_copy.find("span", class_="addon")
+                    if addon:
+                        addon.decompose()
+                    company = company_el_copy.get_text(strip=True)
+                else:
+                    company = "OEA Beirut"
 
-                    # Extract full description
-                    article = dsoup.find("article")
-                    if article:
-                        desc = article.get_text(separator="\n", strip=True)
-                    else:
-                        desc = dsoup.body.get_text(separator="\n", strip=True) if dsoup.body else "See listing for details."
+                # 3. Parse initial deadline if present
+                deadline = "See listing"
+                deadline_el = card.find(class_="deadline-time")
+                if deadline_el:
+                    deadline = deadline_el.get_text(strip=True)
+                    
+                # 4. Check if listing title matches keywords before executing full detail fetch
+                card_classes = card.get("class", [])
+                is_architectural = any("architect" in str(cls).lower() for cls in card_classes)
+                
+                if not (matches_profile(title, "", "Lebanon", platform="OEA") or is_architectural):
+                    continue
+                    
+                print(f"[OEA Beirut] Processing relevant job: '{title}' by '{company}'")
+            
+                # Fetch detail page
+                try:
+                    import time
+                    time.sleep(1.5) # Polite delay
+                    dr = requests.get(detail_url, headers=headers, impersonate="chrome120", timeout=20)
+                    if dr.status_code == 200:
+                        dsoup = BeautifulSoup(dr.text, "html.parser")
                         
-                    # Extract location
-                    loc = "Lebanon"
-                    # Try finding location in meta tags or page text
-                    for meta_item in dsoup.find_all(class_=lambda x: x and "location" in str(x).lower()):
-                        loc_text = meta_item.get_text(strip=True)
-                        if loc_text:
-                            loc = loc_text
-                            break
+                        # Extract email address
+                        email = ""
+                        # Check for data-cfemail
+                        cf_el = dsoup.find(attrs={"data-cfemail": True})
+                        if cf_el:
+                            email = decode_cf_email(cf_el["data-cfemail"])
+                        else:
+                            # Fallback regex search for standard emails in body text
+                            body_txt = dsoup.body.get_text() if dsoup.body else ""
+                            email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", body_txt)
+                            if email_match:
+                                email = email_match.group(0)
+
+                        # Extract full description
+                        article = dsoup.find("article")
+                        if article:
+                            desc = article.get_text(separator="\n", strip=True)
+                        else:
+                            desc = dsoup.body.get_text(separator="\n", strip=True) if dsoup.body else "See listing for details."
                             
-                    # Perform profile matching and AI scoring on full details
-                    if matches_profile(title, desc, loc):
-                        score, reason, reqs = get_ai_evaluation(title, desc, loc, job_url=detail_url)
-                        
-                        # Add deobfuscated email and contact details directly in description
-                        clean_desc = desc
-                        if email:
-                            clean_desc = f"Contact Email: {email}\n\n" + clean_desc
+                        # Extract location
+                        loc = "Lebanon"
+                        # Try finding location in meta tags or page text
+                        for meta_item in dsoup.find_all(class_=lambda x: x and "location" in str(x).lower()):
+                            loc_text = meta_item.get_text(strip=True)
+                            if loc_text:
+                                loc = loc_text
+                                break
+                                
+                        # Perform profile matching and AI scoring on full details
+                        if matches_profile(title, desc, loc, platform="OEA"):
+                            score, reason, reqs = get_ai_evaluation(title, desc, loc, job_url=detail_url)
                             
-                        match = {
-                            "Platform": f"OEA - {company}" if company else "OEA",
-                            "Title": title,
-                            "Location": loc,
-                            "Description": clean_description(clean_desc),
-                            "Deadline": deadline,
-                            "URL": detail_url,
-                            "Match Score": score,
-                            "Match Reason": reason,
-                            "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
-                            "Status": "New"
-                        }
-                        db.save_job(match)
-                        matches_found.append(match)
-                        print(f"  => MATCH FOUND: '{title}' (Score: {score})")
-            except Exception as de:
-                print(f"  Warning: failed to process details for {detail_url}: {de}")
-        except Exception as ce:
-            print(f"  Warning: failed to parse listing card: {ce}")
+                            # Add deobfuscated email and contact details directly in description
+                            clean_desc = desc
+                            if email:
+                                clean_desc = f"Contact Email: {email}\n\n" + clean_desc
+                                
+                            match = {
+                                "Platform": f"OEA - {company}" if company else "OEA",
+                                "Title": title,
+                                "Location": loc,
+                                "Description": clean_description(clean_desc),
+                                "Deadline": deadline,
+                                "URL": detail_url,
+                                "Match Score": score,
+                                "Match Reason": reason,
+                                "Key Requirements": ", ".join(reqs) if isinstance(reqs, list) else reqs,
+                                "Status": "New"
+                            }
+                            db.save_job(match)
+                            matches_found.append(match)
+                            print(f"  => MATCH FOUND: '{title}' (Score: {score})")
+                except Exception as de:
+                    print(f"  Warning: failed to process details for {detail_url}: {de}")
+            except Exception as ce:
+                print(f"  Warning: failed to parse listing card: {ce}")
             
     print(f"[OEA Beirut] Completed. Discovered {len(matches_found)} matches.")
     return matches_found
@@ -2075,7 +2197,7 @@ def scrape_jobs_for_lebanon(existing_urls=None):
                     description = "\n\n".join(desc_parts)
                     
                     # Double-check keyword and location profile match on full details
-                    if matches_profile(title, description, loc):
+                    if matches_profile(title, description, loc, platform="Jobs for Lebanon"):
                         # Perform AI scoring/summary
                         score, reason, reqs = get_ai_evaluation(title, description, loc, job_url=detail_url)
                         
